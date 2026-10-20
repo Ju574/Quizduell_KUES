@@ -12,10 +12,14 @@
 //   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie }]
 //   fragenHolen(pw, ids) → [{ id, kategorie, frage, antworten }]   (max. 20, ohne Lösung)
 //   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung }]       (max. 20)
+//   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
+//   adminLernstandZuruecksetzen(pw, spielerId)
 
+// Mit ?demo in der Adresse läuft immer der Demo-Modus (zum Testen, ohne die echte Datenbank anzufassen).
 const DB = (() => {
   const cfg = window.PRUEFI_CONFIG || {};
-  return cfg.SUPABASE_URL && cfg.SUPABASE_KEY ? supabaseBackend(cfg) : demoBackend();
+  const demoErzwungen = new URLSearchParams(location.search).has('demo');
+  return cfg.SUPABASE_URL && cfg.SUPABASE_KEY && !demoErzwungen ? supabaseBackend(cfg) : demoBackend();
 })();
 
 function supabaseBackend(cfg) {
@@ -75,11 +79,10 @@ function supabaseBackend(cfg) {
       return zeilen[0] || null;
     },
     async duelleVon(spielerId) {
-      const [a, b] = await Promise.all([
-        alle(() => sb.from('duelle').select().eq('spieler1', spielerId).order('id')),
-        alle(() => sb.from('duelle').select().eq('spieler2', spielerId).order('id')),
-      ]);
-      return a.concat(b).sort((x, y) => y.aktualisiert.localeCompare(x.aktualisiert));
+      const listen = await Promise.all(
+        ['spieler1', 'spieler2', 'spieler3'].map((spalte) => alle(() => sb.from('duelle').select().eq(spalte, spielerId).order('id')))
+      );
+      return listen.flat().sort((x, y) => y.aktualisiert.localeCompare(x.aktualisiert));
     },
     beendeteDuelle: () => alle(() => sb.from('duelle').select().eq('status', 'beendet').order('id')),
     async lernstandBuchen(spielerId, frageId, richtig) {
@@ -88,7 +91,7 @@ function supabaseBackend(cfg) {
     lernstandVon: (spielerId) => alle(() => sb.from('lernstand').select().eq('spieler', spielerId).order('frage_id')),
     abonniereDuell: (id, callback) => abonniere('duell', [`id=eq.${id}`], callback),
     abonniereSpieler: (spielerId, callback) =>
-      abonniere('spieler', [`spieler1=eq.${spielerId}`, `spieler2=eq.${spielerId}`], callback),
+      abonniere('spieler', [`spieler1=eq.${spielerId}`, `spieler2=eq.${spielerId}`, `spieler3=eq.${spielerId}`], callback),
     async passwortPruefen(pw) {
       return pruefe(await sb.rpc('passwort_ok', { p_passwort: pw }));
     },
@@ -98,6 +101,28 @@ function supabaseBackend(cfg) {
     },
     async loesungenHolen(pw, ids) {
       return pruefe(await sb.rpc('loesungen_holen', { p_passwort: pw, p_ids: ids }));
+    },
+    // Wer gerade online ist (Supabase Realtime Presence, ohne Tabelle) – callback(Set der Spieler-IDs)
+    anwesenheit(spielerId, callback) {
+      const kanal = sb.channel('online', { config: { presence: { key: spielerId } } });
+      kanal.on('presence', { event: 'sync' }, () => callback(new Set(Object.keys(kanal.presenceState()))));
+      kanal.subscribe((status) => {
+        if (status === 'SUBSCRIBED') kanal.track({ seit: Date.now() });
+      });
+      return () => sb.removeChannel(kanal);
+    },
+    alleDuelle: () => alle(() => sb.from('duelle').select().order('aktualisiert', { ascending: false })),
+    async adminPruefen(pw) {
+      return pruefe(await sb.rpc('admin_ok', { p_passwort: pw }));
+    },
+    async adminSpielerLoeschen(pw, id) {
+      pruefe(await sb.rpc('admin_spieler_loeschen', { p_passwort: pw, p_spieler: id }));
+    },
+    async adminDuellLoeschen(pw, id) {
+      pruefe(await sb.rpc('admin_duell_loeschen', { p_passwort: pw, p_duell: id }));
+    },
+    async adminLernstandZuruecksetzen(pw, id) {
+      pruefe(await sb.rpc('admin_lernstand_zuruecksetzen', { p_passwort: pw, p_spieler: id }));
     },
   };
 }
@@ -174,7 +199,7 @@ function demoBackend() {
     async duelleVon(spielerId) {
       return kopie(
         lesen()
-          .duelle.filter((d) => d.spieler1 === spielerId || d.spieler2 === spielerId)
+          .duelle.filter((d) => [d.spieler1, d.spieler2, d.spieler3].includes(spielerId))
           .sort((a, b) => b.aktualisiert.localeCompare(a.aktualisiert))
       );
     },
@@ -203,7 +228,7 @@ function demoBackend() {
       return () => zuhoerer.delete(f);
     },
     abonniereSpieler(spielerId, callback) {
-      const f = (duell) => (duell.spieler1 === spielerId || duell.spieler2 === spielerId) && callback(duell);
+      const f = (duell) => [duell.spieler1, duell.spieler2, duell.spieler3].includes(spielerId) && callback(duell);
       zuhoerer.add(f);
       return () => zuhoerer.delete(f);
     },
@@ -223,6 +248,57 @@ function demoBackend() {
       return (await demoFragen(pw))
         .filter((f) => ids.includes(f.id))
         .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null }));
+    },
+    // Online-Anzeige im Demo-Modus: jeder Tab meldet sich alle 5 s im localStorage
+    anwesenheit(spielerId, callback) {
+      const SCHLUESSEL = 'pruefi-duell-demo-online';
+      const melden = () => {
+        let liste = {};
+        try { liste = JSON.parse(localStorage.getItem(SCHLUESSEL)) || {}; } catch {}
+        liste[spielerId] = Date.now();
+        localStorage.setItem(SCHLUESSEL, JSON.stringify(liste));
+        pruefen();
+      };
+      const pruefen = () => {
+        let liste = {};
+        try { liste = JSON.parse(localStorage.getItem(SCHLUESSEL)) || {}; } catch {}
+        callback(new Set(Object.keys(liste).filter((id) => Date.now() - liste[id] < 12000)));
+      };
+      const beiAenderung = (e) => e.key === SCHLUESSEL && pruefen();
+      window.addEventListener('storage', beiAenderung);
+      const takt = setInterval(melden, 5000);
+      melden();
+      return () => {
+        clearInterval(takt);
+        window.removeEventListener('storage', beiAenderung);
+      };
+    },
+    // Admin-Passwort im Demo-Modus: „admin“
+    async alleDuelle() {
+      return kopie(lesen().duelle).sort((a, b) => b.aktualisiert.localeCompare(a.aktualisiert));
+    },
+    async adminPruefen(pw) {
+      return pw === 'admin';
+    },
+    async adminSpielerLoeschen(pw, id) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      db.duelle = db.duelle.filter((d) => ![d.spieler1, d.spieler2, d.spieler3].includes(id));
+      db.lernstand = db.lernstand.filter((l) => l.spieler !== id);
+      db.spieler = db.spieler.filter((s) => s.id !== id);
+      schreiben(db);
+    },
+    async adminDuellLoeschen(pw, id) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      db.duelle = db.duelle.filter((d) => d.id !== id);
+      schreiben(db);
+    },
+    async adminLernstandZuruecksetzen(pw, id) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      db.lernstand = db.lernstand.filter((l) => l.spieler !== id);
+      schreiben(db);
     },
   };
 }

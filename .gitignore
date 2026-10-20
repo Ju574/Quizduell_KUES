@@ -2,3 +2,5 @@
 # Fragen bleiben privat – sie liegen nur in Supabase
 fragen.json
 fragen-import.sql
+# Deine Unterlagen und die daraus erzeugten Fragen bleiben lokal
+quellen/

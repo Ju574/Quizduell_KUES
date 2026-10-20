@@ -14,18 +14,27 @@ Die Seite läuft auf GitHub Pages, die Daten liegen in Supabase.
 | `config.js` | Supabase-Adresse und öffentlicher Schlüssel |
 | `supabase.sql` | Legt Tabellen und Schutzfunktionen an (mehrfach ausführbar) |
 | `gruppen-passwort.sql` | Setzt oder ändert das Gruppen-Passwort |
+| `admin-passwort.sql` | Setzt oder ändert das Admin-Passwort |
+| `werkzeuge/karteikarten-zu-fragen.js` | Holt Fragen wörtlich aus einer Karteikarten-HTML-Datei in `fragen.json` |
 | `werkzeuge/fragen-zu-sql.js` | Macht aus `fragen.json` ein Import-Skript für Supabase |
 
-`fragen.json` und `fragen-import.sql` sind über `.gitignore` ausgeschlossen und kommen nie ins Repository.
+`quellen/` (Unterlagen), `fragen.json` und `fragen-import.sql` sind über `.gitignore` ausgeschlossen und kommen nie ins Repository.
 
 ## Einrichtung (einmalig)
 
 Im Supabase-Dashboard unter **SQL Editor → New query** nacheinander ausführen:
 1. `supabase.sql`
-2. `gruppen-passwort.sql` (vorher das Passwort eintragen)
+2. `gruppen-passwort.sql` und `admin-passwort.sql` (vorher jeweils das Passwort eintragen)
 3. `fragen-import.sql`
 
 In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der darf öffentlich sein. Der **secret/service_role key** gehört niemals hierher.
+
+## Neues Kapitel aus Karteikarten
+
+1. Karteikarten-HTML nach `quellen/` legen.
+2. `node werkzeuge/karteikarten-zu-fragen.js quellen/<datei>.html quellen/<datei>_falsch.json <Präfix>`. Ohne vorhandene `_falsch.json` wird erst eine Vorlage angelegt, in die je Karte 3 falsche Antworten kommen.
+3. Erneut ausführen. Frage und richtige Antwort werden wörtlich übernommen.
+4. Weiter mit „Fragen ergänzen oder korrigieren“ ab Schritt 2.
 
 ## Fragen ergänzen oder korrigieren
 
@@ -50,17 +59,21 @@ In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der 
 
 ## Spielmodi
 
-- **🔁 Rundenduell**: 6 Runden à 3 Fragen, 20 Sekunden pro Frage. Ihr wählt abwechselnd die Kategorie.
-- **⚡ Live-Battle**: 7 Fragen gleichzeitig, 15 Sekunden pro Frage. Eine richtige Antwort gibt 10 Punkte plus bis zu 10 Tempo-Bonuspunkte.
+Duelle sind mit 2 oder 3 Spielern möglich. Beim Erstellen wählt man die Runden- bzw. Fragenzahl und die Zeit pro Frage (20 s, 45 s, 90 s oder unbegrenzt).
+
+- **🔁 Rundenduell**: 3, 6 oder 9 Runden à 3 Fragen. Wer eine Runde als Letzter abschließt, wählt die nächste Kategorie.
+- **⚡ Live-Battle**: 5, 7 oder 10 Fragen gleichzeitig; startet, sobald alle angenommen haben. Eine richtige Antwort gibt 10 Punkte plus bis zu 10 Tempo-Bonuspunkte (ohne Zeitlimit: 10 Punkte).
 - **📚 Lernen**: Schwächen üben, neue Fragen oder zufällige Fragen.
 - **📊 Statistik**: Lernstand pro Kategorie. „Sicher“ heißt 3× hintereinander richtig.
-- **🏆 Rangliste**: Sieg = 3 Punkte, Unentschieden = 1 Punkt.
+- **🏆 Rangliste**: Sieg = 3 Punkte, Unentschieden bzw. geteilter Sieg = 1 Punkt.
+- **🟢 Online-Punkt**: zeigt, wer gerade die Seite geöffnet hat.
+- **Admin** (Link unten auf der Startseite): Spieler und Duelle löschen, Lernstand zurücksetzen – nur mit Admin-Passwort.
 
-Rundenzahl, Zeitlimits usw. lassen sich oben in `app.js` im Block `E = { … }` ändern.
+Die Auswahlmöglichkeiten lassen sich oben in `app.js` im Block `E = { … }` ändern. Nach jeder Änderung an CSS/JS die Versionsnummer `?v=…` in `index.html` erhöhen.
 
 ## Gut zu wissen
 
 - Spieler melden sich nur mit Namen an. Für den Zugang zu den Fragen braucht man das Gruppen-Passwort.
 - Wer das Gruppen-Passwort hat, könnte mit Technikwissen nach und nach alle Fragen samt Lösungen abrufen.
 - Supabase Free pausiert ein Projekt nach 7 Tagen ohne Nutzung. Im Dashboard lässt es sich mit einem Klick fortsetzen.
-- Lokal testen: `python -m http.server 8765` ausführen und `http://localhost:8765` öffnen. Ohne Einträge in `config.js` läuft ein Demo-Modus mit der lokalen `fragen.json` (Passwort `demo`).
+- Lokal testen: `python -m http.server 8765` ausführen und `http://localhost:8765/?demo` öffnen. Mit `?demo` läuft ein Demo-Modus im Browser mit der lokalen `fragen.json` (Gruppen-Passwort `demo`, Admin-Passwort `admin`) – die echte Datenbank bleibt unberührt.

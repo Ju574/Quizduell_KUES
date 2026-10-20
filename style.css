@@ -38,6 +38,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -158,6 +159,19 @@ input[type="checkbox"] { width: 20px; height: 20px; }
 }
 .segment button.aktiv { background: var(--flaeche); color: var(--text); box-shadow: var(--schatten); }
 .karte .segment { margin-bottom: 0; }
+.einstellung { display: flex; flex-direction: column; gap: 6px; }
+.einstellung .segment button { padding: 8px 4px; font-size: 0.9rem; }
+.feld-titel { font-weight: 600; font-size: 0.9rem; }
+.haken { width: 18px; color: var(--primaer); font-weight: 800; }
+.duell-zeile:disabled { opacity: 0.45; cursor: default; }
+.start-leiste { position: sticky; bottom: 0; padding: 12px 0 4px; background: linear-gradient(transparent, var(--bg) 30%); }
+.fusszeile { margin-top: 32px; }
+.online-punkt { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: transparent; }
+.online-punkt.an { background: #22c55e; box-shadow: 0 0 0 2px color-mix(in srgb, #22c55e 25%, transparent); }
+.admin-zeile { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--flaeche); border: 1px solid var(--rand); border-radius: 12px; }
+.admin-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.btn.gefahr { color: var(--nok); border-color: var(--nok); }
+.teilnehmer-liste { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 
 /* ---------- Login & Start ---------- */
 .hero { text-align: center; padding: 24px 0 16px; }
@@ -220,6 +234,8 @@ input[type="checkbox"] { width: 20px; height: 20px; }
   background: var(--flaeche);
   color: var(--text);
   font: inherit;
+  font-size: 0.93rem;
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
 }
@@ -246,16 +262,28 @@ input[type="checkbox"] { width: 20px; height: 20px; }
 }
 .aufloesung-zeile .punkt { margin-top: 4px; flex-shrink: 0; }
 
-/* ---------- Spielstand ---------- */
-.spielstand-kopf { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin-bottom: 12px; }
-.spielstand-kopf .spieler-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spielstand-kopf .spieler-name:last-child { text-align: right; }
-.stand { font-size: 1.6rem; font-weight: 800; }
-.live-kopf { padding: 10px 16px; }
-.live-kopf .stand { font-size: 1.3rem; }
+/* ---------- Spielstand (2 oder 3 Spieler) ---------- */
+.stand { font-size: 1.4rem; font-weight: 800; }
+.spieler-name, .spalten-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.runde-zeile { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--rand); }
-.runde-name { text-align: center; font-size: 0.85rem; color: var(--gedaempft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.punkte-kopf { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 8px; text-align: center; padding: 10px 12px; }
+.punkte-kopf .ich .spieler-name { color: var(--primaer); }
+.punkte-kopf .stand { font-size: 1.3rem; }
+
+.runde-zeile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(var(--n, 2), 64px);
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-top: 1px solid var(--rand);
+}
+.runde-zeile > :not(:first-child) { justify-self: center; }
+.runde-zeile.kopf { border-top: none; padding-top: 0; }
+.runde-zeile.kopf .spalten-name { font-size: 0.85rem; max-width: 64px; text-align: center; }
+.runde-zeile.kopf .spalten-name:nth-child(2) { color: var(--primaer); }
+.runde-zeile.summe .runde-name { font-weight: 600; color: var(--text); }
+.runde-name { font-size: 0.85rem; color: var(--gedaempft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .punkte { display: flex; gap: 5px; }
 .punkt { display: inline-block; width: 16px; height: 16px; border-radius: 50%; background: var(--leer); }
 .punkt.ok { background: var(--ok); }

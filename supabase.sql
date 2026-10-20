@@ -24,6 +24,9 @@ create table if not exists public.duelle (
   erstellt timestamptz not null default now(),
   aktualisiert timestamptz not null default now()
 );
+-- Dritter Spieler (Duelle zu dritt)
+alter table public.duelle add column if not exists spieler3 text references public.spieler(id);
+create index if not exists duelle_spieler3 on public.duelle (spieler3);
 create index if not exists duelle_spieler1 on public.duelle (spieler1);
 create index if not exists duelle_spieler2 on public.duelle (spieler2);
 create index if not exists duelle_status on public.duelle (status);
@@ -184,6 +187,73 @@ begin
   end if;
   return query select f.id, f.richtig, f.erklaerung from public.fragen f where f.id = any(p_ids);
 end $$;
+
+-- ===== Admin =====
+-- Eigenes Admin-Passwort (admin-passwort.sql). Nur damit lassen sich Spieler und Duelle löschen.
+
+create or replace function public.admin_ok(p_passwort text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select exists (
+    select 1 from public.einstellungen
+    where schluessel = 'admin_passwort' and wert = crypt(coalesce(p_passwort, ''), wert)
+  );
+$$;
+
+-- Löscht einen Spieler samt seiner Duelle und seines Lernstands
+create or replace function public.admin_spieler_loeschen(p_passwort text, p_spieler text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  delete from public.duelle where spieler1 = p_spieler or spieler2 = p_spieler or spieler3 = p_spieler;
+  delete from public.lernstand where spieler = p_spieler;
+  delete from public.spieler where id = p_spieler;
+end $$;
+
+create or replace function public.admin_duell_loeschen(p_passwort text, p_duell uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  delete from public.duelle where id = p_duell;
+end $$;
+
+create or replace function public.admin_lernstand_zuruecksetzen(p_passwort text, p_spieler text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  delete from public.lernstand where spieler = p_spieler;
+end $$;
+
+revoke execute on function public.admin_ok(text) from public;
+revoke execute on function public.admin_spieler_loeschen(text, text) from public;
+revoke execute on function public.admin_duell_loeschen(text, uuid) from public;
+revoke execute on function public.admin_lernstand_zuruecksetzen(text, text) from public;
+grant execute on function public.admin_ok(text) to anon, authenticated;
+grant execute on function public.admin_spieler_loeschen(text, text) to anon, authenticated;
+grant execute on function public.admin_duell_loeschen(text, uuid) to anon, authenticated;
+grant execute on function public.admin_lernstand_zuruecksetzen(text, text) to anon, authenticated;
 
 revoke execute on function public.passwort_ok(text) from public;
 revoke execute on function public.fragen_katalog(text) from public;

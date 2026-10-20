@@ -2,17 +2,23 @@
 
 // ===== Einstellungen =====
 const E = {
-  RUNDEN: 6,                  // Runden pro Rundenduell
+  RUNDEN_AUSWAHL: [3, 6, 9],         // wählbare Rundenzahl im Rundenduell
+  RUNDEN_STANDARD: 6,
   FRAGEN_PRO_RUNDE: 3,
-  SEKUNDEN_RUNDENDUELL: 20,   // Zeit pro Frage im Rundenduell
-  KATEGORIEN_ZUR_AUSWAHL: 3,  // so viele Kategorien stehen pro Runde zur Wahl
-  LIVE_FRAGEN: 7,             // Fragen pro Live-Battle
-  SEKUNDEN_LIVE: 15,          // Zeit pro Frage im Live-Battle
-  LIVE_PAUSE_MS: 4000,        // Auflösung + Countdown zwischen zwei Live-Fragen
-  LIVE_EINLADUNG_MINUTEN: 10, // danach verfällt eine Live-Einladung
-  LERNEN_FRAGEN: 10,          // Fragen pro Lernrunde
-  SICHER_AB_SERIE: 3,         // so oft in Folge richtig = "sicher"
+  LIVE_FRAGEN_AUSWAHL: [5, 7, 10],   // wählbare Fragenzahl im Live-Battle
+  LIVE_FRAGEN_STANDARD: 7,
+  TIMER_AUSWAHL: [20, 45, 90, null], // Sekunden pro Frage, null = unbegrenzt
+  TIMER_STANDARD: 45,
+  MAX_GEGNER: 2,                     // also bis zu 3 Spieler pro Duell
+  KATEGORIEN_ZUR_AUSWAHL: 3,         // so viele Kategorien stehen pro Runde zur Wahl
+  LIVE_PAUSE_MS: 7000,               // Auflösung + Countdown zwischen zwei Live-Fragen
+  LIVE_EINLADUNG_MINUTEN: 10,        // danach verfällt eine Live-Einladung
+  LERNEN_FRAGEN: 10,                 // Fragen pro Lernrunde
+  LERNEN_SEKUNDEN: 45,
+  SICHER_AB_SERIE: 3,                // so oft in Folge richtig = "sicher"
 };
+// Zeitlimit für Duelle, die vor der Timer-Einstellung angelegt wurden
+const ALT_SEKUNDEN = { runden: 20, live: 15 };
 
 const app = document.getElementById('app');
 let ich = null;                  // { id, name } des angemeldeten Spielers
@@ -21,6 +27,8 @@ let ansicht = '';                // Name der gerade angezeigten Ansicht
 let frageTimer = null;
 let lernstand = new Map();       // frage_id → { richtig, falsch, serie }
 let spielerAbo = null;
+let onlineAbo = null;
+let online = new Set();          // IDs der Spieler, die gerade die Seite offen haben
 const namen = new Map();         // spieler-id → Anzeigename
 const aufraeumer = [];
 
@@ -53,7 +61,8 @@ const loesungenLaden = (ids) => nachladen(ids, LOESUNGEN, DB.loesungenHolen);
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const summe = (liste) => (liste || []).reduce((a, x) => a + (x || 0), 0);
-const nameVon = (id) => namen.get(id) || id;
+const nameVon = (id) => (ich && id === ich.id ? ich.name : namen.get(id) || id);
+const timerText = (s) => (s ? `${s} s` : 'unbegrenzt');
 
 function shuffle(liste) {
   const a = [...liste];
@@ -100,9 +109,19 @@ function fehler(e) {
 }
 window.addEventListener('unhandledrejection', (e) => fehler(e.reason));
 
-function gegnerVon(duell) {
-  return duell.spieler1 === ich.id ? duell.spieler2 : duell.spieler1;
+// ===== Duell-Grundlagen (2 oder 3 Spieler) =====
+const teilnehmer = (duell) => [duell.spieler1, duell.spieler2, duell.spieler3].filter(Boolean);
+const gegnerVon = (duell) => teilnehmer(duell).filter((s) => s !== ich.id);
+const gegnerNamen = (duell) => gegnerVon(duell).map(nameVon).join(' & ');
+const reihenfolge = (duell) => [ich.id, ...gegnerVon(duell)];
+
+// Grüner Punkt für Spieler, die gerade online sind – wird live aktualisiert
+const onlinePunkt = (id) => `<span class="online-punkt ${online.has(id) ? 'an' : ''}" data-online="${esc(id)}" title="online"></span>`;
+const gegnerMitPunkt = (duell) => gegnerVon(duell).map((g) => onlinePunkt(g) + esc(nameVon(g))).join(' & ');
+function onlineAktualisieren() {
+  app.querySelectorAll('[data-online]').forEach((el) => el.classList.toggle('an', online.has(el.dataset.online)));
 }
+const sekundenVon = (duell) => (duell.daten.sekunden === undefined ? ALT_SEKUNDEN[duell.modus] : duell.daten.sekunden);
 
 async function ladeSpieler() {
   const liste = await DB.spielerListe();
@@ -132,8 +151,9 @@ function lernstandBuchen(frageId, richtig) {
   DB.lernstandBuchen(ich.id, frageId, richtig).catch(fehler);
 }
 
+// Punkte, Ergebnis (s = Sieg, u = geteilter Sieg/Unentschieden, n = Niederlage) und Platz je Spieler
 function duellErgebnis(duell) {
-  const spieler = [duell.spieler1, duell.spieler2];
+  const spieler = teilnehmer(duell);
   const punkte = {};
   for (const s of spieler) {
     punkte[s] =
@@ -141,21 +161,27 @@ function duellErgebnis(duell) {
         ? (duell.daten.antworten[s] || []).reduce((a, x) => a + (x ? x.p : 0), 0)
         : duell.daten.runden.reduce((a, r) => a + summe(r.antworten[s]), 0);
   }
-  let sieger = null;
-  if (duell.daten.aufgegeben) sieger = spieler.find((s) => s !== duell.daten.aufgegeben);
-  else if (punkte[spieler[0]] !== punkte[spieler[1]]) sieger = punkte[spieler[0]] > punkte[spieler[1]] ? spieler[0] : spieler[1];
-  return { punkte, sieger };
+  const aktiv = spieler.filter((s) => s !== duell.daten.aufgegeben);
+  const bester = Math.max(...aktiv.map((s) => punkte[s]));
+  const oben = aktiv.filter((s) => punkte[s] === bester);
+  const ergebnis = {};
+  const platz = {};
+  for (const s of spieler) {
+    ergebnis[s] = !oben.includes(s) ? 'n' : oben.length === 1 ? 's' : 'u';
+    platz[s] = s === duell.daten.aufgegeben ? spieler.length : 1 + aktiv.filter((x) => punkte[x] > punkte[s]).length;
+  }
+  return { punkte, ergebnis, platz };
 }
 
 function ergebnisSatz(duell) {
-  const { punkte, sieger } = duellErgebnis(duell);
-  const g = gegnerVon(duell);
-  const stand = `${punkte[ich.id]} : ${punkte[g]}`;
-  const zusatz = duell.daten.aufgegeben ? (duell.daten.aufgegeben === ich.id ? ' (aufgegeben)' : ` (${nameVon(g)} hat aufgegeben)`) : '';
-  if (!sieger) return { text: `Unentschieden ${stand}`, klasse: '' };
-  return sieger === ich.id
-    ? { text: `🏆 Gewonnen ${stand}${zusatz}`, klasse: 'ok' }
-    : { text: `Verloren ${stand}${zusatz}`, klasse: 'nok' };
+  const { punkte, ergebnis, platz } = duellErgebnis(duell);
+  const anzahl = teilnehmer(duell).length;
+  const stand = reihenfolge(duell).map((s) => punkte[s]).join(' : ');
+  const a = duell.daten.aufgegeben;
+  const zusatz = a ? (a === ich.id ? ' (aufgegeben)' : ` (${nameVon(a)} hat aufgegeben)`) : '';
+  if (ergebnis[ich.id] === 's') return { text: `🏆 Gewonnen ${stand}${zusatz}`, klasse: 'ok' };
+  if (ergebnis[ich.id] === 'u') return { text: `${anzahl > 2 ? 'Geteilter Sieg' : 'Unentschieden'} ${stand}${zusatz}`, klasse: '' };
+  return { text: `${anzahl > 2 ? `Platz ${platz[ich.id]} von ${anzahl}` : 'Verloren'} ${stand}${zusatz}`, klasse: 'nok' };
 }
 
 function antwortKnoepfe(optionen) {
@@ -261,6 +287,7 @@ const ROUTEN = [
   [/^#\/lernen$/, () => lernenAuswahl()],
   [/^#\/statistik$/, () => statistik()],
   [/^#\/rangliste$/, () => rangliste()],
+  [/^#\/admin$/, () => adminAnsicht()],
 ];
 
 async function route() {
@@ -378,6 +405,11 @@ async function anmelden(spieler) {
   lernstand = new Map(zeilen.map((z) => [z.frage_id, z]));
   if (spielerAbo) spielerAbo();
   spielerAbo = DB.abonniereSpieler(ich.id, aufDuellAenderung);
+  if (onlineAbo) onlineAbo();
+  onlineAbo = DB.anwesenheit(ich.id, (ids) => {
+    online = ids;
+    onlineAktualisieren();
+  });
   topbarAktualisieren();
   route();
 }
@@ -385,6 +417,9 @@ async function anmelden(spieler) {
 function abmelden() {
   speichern('pruefi-ich', null);
   if (spielerAbo) spielerAbo();
+  if (onlineAbo) onlineAbo();
+  onlineAbo = null;
+  online = new Set();
   ich = null;
   location.hash = '#/';
   route();
@@ -396,16 +431,17 @@ function topbarAktualisieren() {
   if (ich) el.querySelector('#abmelden').onclick = abmelden;
 }
 
-function liveEinladungGueltig(duell) {
-  return Date.now() - new Date(duell.erstellt).getTime() < E.LIVE_EINLADUNG_MINUTEN * 60000;
-}
+// ===== Live-Einladungen =====
+const angenommenVon = (duell) => duell.daten.angenommen || [duell.spieler1];
+const liveEinladungGueltig = (duell) => Date.now() - new Date(duell.erstellt).getTime() < E.LIVE_EINLADUNG_MINUTEN * 60000;
+const istOffeneEinladungFuerMich = (duell) =>
+  duell.modus === 'live' && duell.status === 'offen' && !angenommenVon(duell).includes(ich.id) && liveEinladungGueltig(duell);
 
 // Wird bei jeder Änderung an einem meiner Duelle aufgerufen (Echtzeit)
 async function aufDuellAenderung(duell) {
-  if (!namen.has(duell.spieler1) || !namen.has(duell.spieler2)) await ladeSpieler().catch(() => {});
-  const istEinladung = duell.modus === 'live' && duell.status === 'offen' && duell.spieler2 === ich.id;
+  if (teilnehmer(duell).some((s) => !namen.has(s))) await ladeSpieler().catch(() => {});
   const schonDort = location.hash === '#/duell/' + duell.id;
-  if (istEinladung && !schonDort && ansicht !== 'frage' && liveEinladungGueltig(duell)) {
+  if (istOffeneEinladungFuerMich(duell) && !schonDort && ansicht !== 'frage') {
     toast(`⚡ ${nameVon(duell.spieler1)} fordert dich zum Live-Battle heraus!`, 'Ansehen', () => gehe('#/duell/' + duell.id));
   }
   if (ansicht === 'start') startseite().catch(fehler);
@@ -416,25 +452,27 @@ async function startseite() {
   const [duelle] = await Promise.all([DB.duelleVon(ich.id), ladeSpieler()]);
   ansicht = 'start';
 
-  const einladungen = duelle.filter((d) => d.modus === 'live' && d.status === 'offen' && d.spieler2 === ich.id && liveEinladungGueltig(d));
+  const liveOffen = (d) => d.modus === 'live' && d.status === 'offen' && liveEinladungGueltig(d);
+  const einladungen = duelle.filter(istOffeneEinladungFuerMich);
   const liveLaufend = duelle.filter((d) => d.modus === 'live' && d.status === 'laeuft');
   const amZug = duelle.filter((d) => d.modus === 'runden' && d.status === 'laeuft' && d.daten.amZug === ich.id);
   const warten = duelle.filter(
     (d) =>
       (d.modus === 'runden' && d.status === 'laeuft' && d.daten.amZug !== ich.id) ||
-      (d.modus === 'live' && d.status === 'offen' && d.spieler1 === ich.id && liveEinladungGueltig(d))
+      (liveOffen(d) && angenommenVon(d).includes(ich.id))
   );
   const beendet = duelle.filter((d) => d.status === 'beendet').slice(0, 10);
 
   const zeile = (d, rechts, hervorheben) => `
     <a class="duell-zeile ${hervorheben ? 'hervorheben' : ''}" href="#/duell/${d.id}">
       <span class="duell-modus">${d.modus === 'live' ? '⚡' : '🔁'}</span>
-      <span class="duell-gegner">${esc(nameVon(gegnerVon(d)))}</span>
+      <span class="duell-gegner">${gegnerMitPunkt(d)}</span>
       <span class="duell-status">${rechts}</span>
     </a>`;
   const abschnitt = (titel, liste, fn) =>
     liste.length ? `<section><h3>${titel}</h3><div class="liste">${liste.map(fn).join('')}</div></section>` : '';
   const rundeInfo = (d) => `Runde ${Math.max(1, d.daten.runden.length)}/${d.daten.anzahl}`;
+  const wartenInfo = (d) => (d.modus === 'live' ? 'Einladung offen' : `${rundeInfo(d)} · ${esc(nameVon(d.daten.amZug))} ist dran`);
 
   const imKatalog = new Set(FRAGEN_LISTE.map((f) => f.id));
   const sicher = [...lernstand.entries()].filter(([id, l]) => imKatalog.has(id) && l.serie >= E.SICHER_AB_SERIE).length;
@@ -452,26 +490,44 @@ async function startseite() {
     ${abschnitt('⚡ Live-Herausforderungen', einladungen, (d) => zeile(d, 'Annehmen?', true))}
     ${abschnitt('Live-Battle läuft', liveLaufend, (d) => zeile(d, 'Weiterspielen', true))}
     ${abschnitt('Du bist dran', amZug, (d) => zeile(d, rundeInfo(d), true))}
-    ${abschnitt('Warten auf Gegner', warten, (d) => zeile(d, d.modus === 'live' ? 'Einladung offen' : rundeInfo(d)))}
+    ${abschnitt('Warten auf Gegner', warten, (d) => zeile(d, wartenInfo(d)))}
     ${abschnitt('Beendet', beendet, (d) => {
       const e = ergebnisSatz(d);
       return zeile(d, `<span class="${e.klasse}">${esc(e.text)}</span>`);
     })}
-    ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}`);
+    ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}
+    <p class="mitte fusszeile"><a class="link gedaempft klein" href="#/admin">Admin</a></p>`);
 }
 
 // ===== Neues Duell =====
 async function neuesDuell() {
   const spieler = (await ladeSpieler()).filter((s) => s.id !== ich.id);
   ansicht = 'neu';
+  const wahl = {
+    modus: 'runden',
+    gegner: [],
+    runden: E.RUNDEN_STANDARD,
+    liveFragen: E.LIVE_FRAGEN_STANDARD,
+    sekunden: E.TIMER_STANDARD,
+    kategorie: '',
+  };
+
   show(`
     <h2>Neues Duell</h2>
     <div class="karte stapel">
       <div class="segment" id="modus">
-        <button class="aktiv" data-modus="runden">🔁 Rundenduell</button>
-        <button data-modus="live">⚡ Live-Battle</button>
+        <button data-wert="runden">🔁 Rundenduell</button>
+        <button data-wert="live">⚡ Live-Battle</button>
       </div>
       <p class="klein gedaempft" id="modus-info"></p>
+      <div class="einstellung">
+        <span class="feld-titel" id="anzahl-titel"></span>
+        <div class="segment" id="anzahl"></div>
+      </div>
+      <div class="einstellung">
+        <span class="feld-titel">Zeit pro Frage</span>
+        <div class="segment" id="timer">${E.TIMER_AUSWAHL.map((s) => `<button data-wert="${s ?? ''}">${timerText(s)}</button>`).join('')}</div>
+      </div>
       <label id="kategorie-feld" hidden>Kategorie
         <select id="kategorie">
           <option value="">Alle Kategorien</option>
@@ -479,71 +535,135 @@ async function neuesDuell() {
         </select>
       </label>
     </div>
-    <h3>Gegner wählen</h3>
+    <h3>Gegner wählen <span class="klein">(1 oder ${E.MAX_GEGNER})</span></h3>
     <input id="suche" placeholder="Name suchen …" autocomplete="off">
-    <div class="liste" id="gegner-liste"></div>`);
+    <div class="liste" id="gegner-liste"></div>
+    <div class="start-leiste"><button class="btn primaer" id="starten" disabled>Gegner wählen</button></div>`);
 
-  let modus = 'runden';
-  const info = {
-    runden: `${E.RUNDEN} Runden à ${E.FRAGEN_PRO_RUNDE} Fragen. Ihr wählt abwechselnd die Kategorie und spielt, wann ihr Zeit habt.`,
-    live: `${E.LIVE_FRAGEN} Fragen gleichzeitig, ${E.SEKUNDEN_LIVE} Sekunden pro Frage. Schnelle richtige Antworten geben Bonuspunkte. Dein Gegner muss online sein.`,
+  const segmentAktiv = (sel, wert) =>
+    app.querySelectorAll(`${sel} button`).forEach((b) => b.classList.toggle('aktiv', b.dataset.wert === String(wert ?? '')));
+  const zeichnenEinstellungen = () => {
+    segmentAktiv('#modus', wahl.modus);
+    const live = wahl.modus === 'live';
+    app.querySelector('#modus-info').textContent = live
+      ? 'Alle spielen gleichzeitig dieselben Fragen. Schnelle richtige Antworten geben Bonuspunkte. Deine Gegner müssen online sein.'
+      : `Ihr wählt reihum die Kategorie (je ${E.FRAGEN_PRO_RUNDE} Fragen) und spielt, wann ihr Zeit habt.`;
+    app.querySelector('#anzahl-titel').textContent = live ? 'Anzahl Fragen' : 'Anzahl Runden';
+    const optionen = live ? E.LIVE_FRAGEN_AUSWAHL : E.RUNDEN_AUSWAHL;
+    const aktuell = live ? wahl.liveFragen : wahl.runden;
+    const anzahl = app.querySelector('#anzahl');
+    anzahl.innerHTML = optionen.map((n) => `<button data-wert="${n}">${n}</button>`).join('');
+    anzahl.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => {
+        if (live) wahl.liveFragen = Number(b.dataset.wert);
+        else wahl.runden = Number(b.dataset.wert);
+        segmentAktiv('#anzahl', b.dataset.wert);
+      };
+    });
+    segmentAktiv('#anzahl', aktuell);
+    segmentAktiv('#timer', wahl.sekunden);
+    app.querySelector('#kategorie-feld').hidden = !live;
   };
-  const modusSetzen = (m) => {
-    modus = m;
-    app.querySelectorAll('#modus button').forEach((b) => b.classList.toggle('aktiv', b.dataset.modus === m));
-    app.querySelector('#modus-info').textContent = info[m];
-    app.querySelector('#kategorie-feld').hidden = m !== 'live';
-  };
-  app.querySelectorAll('#modus button').forEach((b) => (b.onclick = () => modusSetzen(b.dataset.modus)));
-  modusSetzen('runden');
+  app.querySelectorAll('#modus button').forEach((b) => (b.onclick = () => { wahl.modus = b.dataset.wert; zeichnenEinstellungen(); }));
+  app.querySelectorAll('#timer button').forEach((b) => (b.onclick = () => {
+    wahl.sekunden = b.dataset.wert ? Number(b.dataset.wert) : null;
+    segmentAktiv('#timer', b.dataset.wert);
+  }));
+  on('#kategorie', (e) => (wahl.kategorie = e.target.value), 'change');
+  zeichnenEinstellungen();
 
+  const startKnopf = app.querySelector('#starten');
   const liste = app.querySelector('#gegner-liste');
-  const zeichnen = () => {
+  const zeichnenGegner = () => {
     const filter = app.querySelector('#suche').value.trim().toLowerCase();
-    const treffer = spieler.filter((s) => s.name.toLowerCase().includes(filter));
+    const treffer = spieler
+      .filter((s) => s.name.toLowerCase().includes(filter) || wahl.gegner.includes(s.id))
+      .sort((a, b) => online.has(b.id) - online.has(a.id)); // wer online ist, steht oben
+    const voll = wahl.gegner.length >= E.MAX_GEGNER;
     liste.innerHTML = treffer.length
-      ? treffer.map((s) => `<button class="duell-zeile" data-id="${esc(s.id)}"><span class="duell-gegner">${esc(s.name)}</span><span class="duell-status">Herausfordern ›</span></button>`).join('')
+      ? treffer
+          .map((s) => {
+            const gewaehlt = wahl.gegner.includes(s.id);
+            return `<button class="duell-zeile ${gewaehlt ? 'hervorheben' : ''}" data-id="${esc(s.id)}" ${!gewaehlt && voll ? 'disabled' : ''}>
+              <span class="haken">${gewaehlt ? '✓' : ''}</span>
+              <span class="duell-gegner">${onlinePunkt(s.id)}${esc(s.name)}</span>
+            </button>`;
+          })
+          .join('')
       : `<p class="leer">${spieler.length ? 'Niemand gefunden.' : 'Noch keine anderen Spieler. Schick deinen Mitstudenten den Link zur Seite!'}</p>`;
-    liste.querySelectorAll('button').forEach((b) => (b.onclick = () => duellStarten(modus, b.dataset.id, app.querySelector('#kategorie').value).catch(fehler)));
+    liste.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => {
+        const id = b.dataset.id;
+        wahl.gegner = wahl.gegner.includes(id) ? wahl.gegner.filter((x) => x !== id) : [...wahl.gegner, id];
+        zeichnenGegner();
+      };
+    });
+    startKnopf.disabled = !wahl.gegner.length;
+    startKnopf.textContent = wahl.gegner.length ? `Duell starten gegen ${wahl.gegner.map(nameVon).join(' & ')}` : 'Gegner wählen';
   };
-  on('#suche', zeichnen, 'input');
-  zeichnen();
+  on('#suche', zeichnenGegner, 'input');
+  zeichnenGegner();
+
+  startKnopf.onclick = async () => {
+    startKnopf.disabled = true;
+    try {
+      await duellStarten(wahl);
+    } catch (e) {
+      startKnopf.disabled = false;
+      fehler(e);
+    }
+  };
 }
 
-async function duellStarten(modus, gegner, kategorie) {
+// wahl: { modus, gegner: [ids], runden, liveFragen, sekunden, kategorie }
+async function duellStarten(wahl) {
   if (!FRAGEN_LISTE.length) return toast('Es sind noch keine Fragen in der Datenbank.');
+  const [g1, g2] = wahl.gegner;
+  const basis = { modus: wahl.modus, spieler1: ich.id, spieler2: g1, ...(g2 ? { spieler3: g2 } : {}) };
+  const alle = [ich.id, ...wahl.gegner];
   let duell;
-  if (modus === 'runden') {
+  if (wahl.modus === 'runden') {
     duell = await DB.duellAnlegen({
-      modus,
-      spieler1: ich.id,
-      spieler2: gegner,
+      ...basis,
       status: 'laeuft',
-      daten: { anzahl: E.RUNDEN, amZug: ich.id, runden: [] },
+      daten: { anzahl: wahl.runden, sekunden: wahl.sekunden, amZug: ich.id, runden: [] },
     });
   } else {
-    const pool = kategorie ? FRAGEN_LISTE.filter((f) => f.kategorie === kategorie) : FRAGEN_LISTE;
+    const pool = wahl.kategorie ? FRAGEN_LISTE.filter((f) => f.kategorie === wahl.kategorie) : FRAGEN_LISTE;
     duell = await DB.duellAnlegen({
-      modus,
-      spieler1: ich.id,
-      spieler2: gegner,
+      ...basis,
       status: 'offen',
       daten: {
-        kategorie: kategorie || 'Alle Kategorien',
-        fragen: shuffle(pool).slice(0, E.LIVE_FRAGEN).map((f) => f.id),
+        kategorie: wahl.kategorie || 'Alle Kategorien',
+        fragen: shuffle(pool).slice(0, wahl.liveFragen).map((f) => f.id),
+        sekunden: wahl.sekunden,
         index: 0,
         start: 0,
-        antworten: { [ich.id]: [], [gegner]: [] },
+        angenommen: [ich.id],
+        antworten: Object.fromEntries(alle.map((s) => [s, []])),
       },
     });
   }
   gehe('#/duell/' + duell.id);
 }
 
+// Revanche mit denselben Gegnern und Einstellungen
+function revanche(duell) {
+  const d = duell.daten;
+  return duellStarten({
+    modus: duell.modus,
+    gegner: gegnerVon(duell),
+    runden: d.anzahl || E.RUNDEN_STANDARD,
+    liveFragen: d.fragen ? d.fragen.length : E.LIVE_FRAGEN_STANDARD,
+    sekunden: sekundenVon(duell),
+    kategorie: d.kategorie && d.kategorie !== 'Alle Kategorien' ? d.kategorie : '',
+  });
+}
+
 async function duellAnzeigen(id) {
   const duell = await DB.duellLaden(id);
-  if (duell.spieler1 !== ich.id && duell.spieler2 !== ich.id) throw new Error('Dieses Duell gehört nicht dir.');
-  if (!namen.has(duell.spieler1) || !namen.has(duell.spieler2)) await ladeSpieler();
+  if (!teilnehmer(duell).includes(ich.id)) throw new Error('Dieses Duell gehört nicht dir.');
+  if (teilnehmer(duell).some((s) => !namen.has(s))) await ladeSpieler();
   if (duell.modus === 'live') return liveAnzeigen(duell);
   beimVerlassen(
     DB.abonniereDuell(id, (neu) => {
@@ -554,7 +674,8 @@ async function duellAnzeigen(id) {
 }
 
 async function aufgeben(duell) {
-  if (!confirm('Wirklich aufgeben? Das zählt als Niederlage.')) return;
+  const text = teilnehmer(duell).length > 2 ? 'Wirklich aufgeben? Das Duell endet dann für alle und zählt für dich als Niederlage.' : 'Wirklich aufgeben? Das zählt als Niederlage.';
+  if (!confirm(text)) return;
   await duellAktualisieren(duell.id, (d) => {
     if (d.status !== 'laeuft') return null;
     d.status = 'beendet';
@@ -566,6 +687,11 @@ async function aufgeben(duell) {
 
 // ===== Rundenduell =====
 const rundeFertig = (runde, spieler) => (runde.antworten[spieler] || []).length >= runde.fragen.length;
+const rundeKomplett = (runde, duell) => teilnehmer(duell).every((s) => rundeFertig(runde, s));
+const naechsterSpieler = (duell, s) => {
+  const t = teilnehmer(duell);
+  return t[(t.indexOf(s) + 1) % t.length];
+};
 
 function punkteReihe(runde, spieler, sichtbar) {
   const n = runde ? runde.fragen.length : E.FRAGEN_PRO_RUNDE;
@@ -581,37 +707,30 @@ function punkteReihe(runde, spieler, sichtbar) {
 
 function rundenSpielstand(duell) {
   const d = duell.daten;
-  const g = gegnerVon(duell);
+  const spieler = reihenfolge(duell);
   const beendet = duell.status === 'beendet';
-  // Gegnerische Antworten sieht man erst, wenn man die Runde selbst gespielt hat
+  // Antworten der anderen sieht man erst, wenn man die Runde selbst gespielt hat
   const sichtbar = (r) => beendet || (r && rundeFertig(r, ich.id));
   const punkteVon = (s) => d.runden.reduce((a, r) => a + (s === ich.id || sichtbar(r) ? summe(r.antworten[s]) : 0), 0);
+  const zeile = (inhalt, klasse = '') => `<div class="runde-zeile ${klasse}" style="--n:${spieler.length}">${inhalt}</div>`;
 
-  let zeilen = '';
+  let html = zeile(`<div></div>${spieler.map((s) => `<div class="spalten-name">${esc(nameVon(s))}</div>`).join('')}`, 'kopf');
+  html += zeile(`<div class="runde-name">Punkte</div>${spieler.map((s) => `<div class="stand">${punkteVon(s)}</div>`).join('')}`, 'summe');
   for (let i = 0; i < d.anzahl; i++) {
     const r = d.runden[i];
-    zeilen += `
-      <div class="runde-zeile">
-        ${punkteReihe(r, ich.id, true)}
-        <div class="runde-name">${r ? esc(r.kategorie) : `Runde ${i + 1}`}</div>
-        ${punkteReihe(r, g, sichtbar(r))}
-      </div>`;
+    html += zeile(
+      `<div class="runde-name">${r ? esc(r.kategorie) : `Runde ${i + 1}`}</div>${spieler
+        .map((s) => punkteReihe(r, s, s === ich.id || sichtbar(r)))
+        .join('')}`
+    );
   }
-  return `
-    <div class="karte spielstand">
-      <div class="spielstand-kopf">
-        <div class="spieler-name">${esc(ich.name)}</div>
-        <div class="stand">${punkteVon(ich.id)} : ${punkteVon(g)}</div>
-        <div class="spieler-name">${esc(nameVon(g))}</div>
-      </div>
-      ${zeilen}
-    </div>`;
+  return `<div class="karte spielstand">${html}</div>`;
 }
 
 function rundenUebersicht(duell) {
   ansicht = 'runden-uebersicht';
-  const g = gegnerVon(duell);
-  const dran = duell.status === 'laeuft' && duell.daten.amZug === ich.id;
+  const d = duell.daten;
+  const dran = duell.status === 'laeuft' && d.amZug === ich.id;
   let aktion;
   if (duell.status === 'beendet') {
     const e = ergebnisSatz(duell);
@@ -620,10 +739,10 @@ function rundenUebersicht(duell) {
   } else if (dran) {
     aktion = `<button class="btn primaer" id="spielen">Spielen</button>`;
   } else {
-    aktion = `<p class="hinweis">Warte auf ${esc(nameVon(g))} …</p>`;
+    aktion = `<p class="hinweis">Warte auf ${esc(nameVon(d.amZug))} …</p>`;
   }
   show(`
-    <div class="frage-kopf"><span>🔁 Rundenduell</span><span>gegen ${esc(nameVon(g))}</span></div>
+    <div class="frage-kopf"><span>🔁 Rundenduell · ${d.anzahl} Runden · ${timerText(sekundenVon(duell))}</span><span>gegen ${esc(gegnerNamen(duell))}</span></div>
     ${rundenSpielstand(duell)}
     <div class="stapel">
       ${aktion}
@@ -631,11 +750,12 @@ function rundenUebersicht(duell) {
       ${duell.status === 'laeuft' ? '<button class="link gedaempft" id="aufgeben">Aufgeben</button>' : ''}
     </div>`);
   on('#spielen', () => rundenZug(duell.id).catch(fehler));
-  on('#revanche', () => duellStarten('runden', g).catch(fehler));
+  on('#revanche', () => revanche(duell).catch(fehler));
   on('#aufgeben', () => aufgeben(duell).catch(fehler));
 }
 
 // Spielt alles, was in diesem Zug zu tun ist: offene Runde nachspielen, ggf. neue Kategorie wählen.
+// Reihum: Wer eine Runde als Letzter abschließt, wählt die Kategorie der nächsten.
 async function rundenZug(id) {
   const duell = await DB.duellLaden(id);
   const d = duell.daten;
@@ -643,19 +763,16 @@ async function rundenZug(id) {
   const offen = d.runden.findIndex((r) => !rundeFertig(r, ich.id));
   if (offen >= 0) return rundeSpielen(duell, offen);
   const letzte = d.runden[d.runden.length - 1];
-  const letzteKomplett = !letzte || (rundeFertig(letzte, duell.spieler1) && rundeFertig(letzte, duell.spieler2));
-  if (d.runden.length < d.anzahl && letzteKomplett) return kategorieWaehlen(duell);
+  if (d.runden.length < d.anzahl && (!letzte || rundeKomplett(letzte, duell))) return kategorieWaehlen(duell);
   return zugBeenden(duell.id);
 }
 
 async function zugBeenden(id) {
   const duell = await duellAktualisieren(id, (d) => {
     if (d.status !== 'laeuft' || d.daten.amZug !== ich.id) return null;
-    const komplett =
-      d.daten.runden.length >= d.daten.anzahl &&
-      d.daten.runden.every((r) => rundeFertig(r, d.spieler1) && rundeFertig(r, d.spieler2));
+    const komplett = d.daten.runden.length >= d.daten.anzahl && d.daten.runden.every((r) => rundeKomplett(r, d));
     if (komplett) d.status = 'beendet';
-    else d.daten.amZug = gegnerVon(d);
+    else d.daten.amZug = naechsterSpieler(d, ich.id);
     return d;
   });
   rundenUebersicht(duell);
@@ -681,7 +798,7 @@ async function kategorieWaehlen(duell) {
 
   ansicht = 'kategorie';
   show(`
-    <div class="frage-kopf"><span>Runde ${d.runden.length + 1} von ${d.anzahl}</span><span>gegen ${esc(nameVon(gegnerVon(duell)))}</span></div>
+    <div class="frage-kopf"><span>Runde ${d.runden.length + 1} von ${d.anzahl}</span><span>gegen ${esc(gegnerNamen(duell))}</span></div>
     <h2 class="mitte">Wähle eine Kategorie</h2>
     <div class="stapel">${auswahl.map((k, i) => `<button class="btn kategorie" data-i="${i}">${esc(k)}</button>`).join('')}</div>`);
 
@@ -729,7 +846,7 @@ async function rundeSpielen(duell, idx) {
       frage,
       titel: `Runde ${idx + 1} · ${runde.kategorie}`,
       info: `Frage ${j + 1}/${runde.fragen.length}`,
-      sekunden: E.SEKUNDEN_RUNDENDUELL,
+      sekunden: sekundenVon(duell),
       beiAntwort: (richtig) => {
         lernstandBuchen(frage.id, richtig);
         return antwortSpeichern(j, richtig ? 1 : 0);
@@ -743,16 +860,18 @@ async function rundeSpielen(duell, idx) {
 async function rundeErgebnis(id, idx) {
   const duell = await DB.duellLaden(id);
   const runde = duell.daten.runden[idx];
-  const g = gegnerVon(duell);
   const meine = runde.antworten[ich.id] || [];
-  const seine = runde.antworten[g];
   const [fragen, loesungen] = await Promise.all([fragenLaden(runde.fragen), loesungenLaden(runde.fragen)]);
+  const andere = gegnerVon(duell)
+    .filter((s) => rundeFertig(runde, s))
+    .map((s) => `${esc(nameVon(s))}: ${summe(runde.antworten[s])} richtig`)
+    .join(' · ');
   ansicht = 'runden-ergebnis';
   show(`
-    <div class="frage-kopf"><span>Runde ${idx + 1} · ${esc(runde.kategorie)}</span><span>gegen ${esc(nameVon(g))}</span></div>
+    <div class="frage-kopf"><span>Runde ${idx + 1} · ${esc(runde.kategorie)}</span><span>gegen ${esc(gegnerNamen(duell))}</span></div>
     <div class="karte">
       <p class="meldung gross">${summe(meine)} von ${runde.fragen.length} richtig</p>
-      ${seine && seine.length >= runde.fragen.length ? `<p class="mitte gedaempft">${esc(nameVon(g))} hatte ${summe(seine)} richtig.</p>` : ''}
+      ${andere ? `<p class="mitte gedaempft">${andere}</p>` : ''}
     </div>
     <div class="liste">
       ${runde.fragen
@@ -772,8 +891,11 @@ async function rundeErgebnis(id, idx) {
 }
 
 // ===== Live-Battle =====
-const LIVE_DAUER = () => E.SEKUNDEN_LIVE * 1000;
-const livePunkte = (ms) => 10 + Math.round(10 * Math.max(0, 1 - ms / LIVE_DAUER()));
+const liveDauer = (duell) => {
+  const s = sekundenVon(duell);
+  return s ? s * 1000 : 0; // 0 = unbegrenzt
+};
+const livePunkte = (ms, dauer) => (dauer ? 10 + Math.round(10 * Math.max(0, 1 - ms / dauer)) : 10);
 
 async function liveAnzeigen(duell) {
   await fragenLaden(duell.daten.fragen);
@@ -804,7 +926,7 @@ function liveTick(live) {
   const jetzt = Date.now();
   if (duell.status === 'offen') {
     if (!liveEinladungGueltig(duell)) return einmal(live, 'abgelaufen', () => liveHinweis('Diese Einladung ist abgelaufen.'));
-    return einmal(live, 'offen', () => liveOffen(live));
+    return einmal(live, 'offen:' + angenommenVon(duell).join(','), () => liveOffen(live));
   }
   if (duell.status === 'abgelehnt') return einmal(live, 'abgelehnt', () => liveHinweis('Dieses Live-Battle wurde abgesagt.'));
   if (duell.status === 'beendet') return einmal(live, 'beendet', () => liveEnde(live));
@@ -818,19 +940,18 @@ function liveTick(live) {
   }
 
   einmal(live, 'frage' + i, () => liveFrage(live));
-  const g = gegnerVon(duell);
-  const dauer = LIVE_DAUER();
+  const dauer = liveDauer(duell);
   const balken = app.querySelector('.timer-balken');
-  if (balken) {
+  if (balken && dauer) {
     const rest = Math.max(0, 1 - (jetzt - d.start) / dauer);
     balken.style.width = rest * 100 + '%';
     balken.classList.toggle('knapp', rest < 0.25);
   }
   const status = app.querySelector('#gegner-status');
-  if (status) status.textContent = d.antworten[g][i] ? `${nameVon(g)} hat geantwortet` : `${nameVon(g)} überlegt …`;
+  if (status) status.textContent = gegnerVon(duell).map((g) => `${d.antworten[g][i] ? '✓' : '…'} ${nameVon(g)}`).join('   ');
 
-  const meineAntwort = d.antworten[ich.id][i];
-  if (!meineAntwort && live.gewaehlt == null && jetzt > d.start + dauer) {
+  const zeitUm = dauer && jetzt > d.start + dauer;
+  if (zeitUm && !d.antworten[ich.id][i] && live.gewaehlt == null) {
     live.gewaehlt = -1;
     sperren(-1);
     const m = app.querySelector('#meine-meldung');
@@ -841,23 +962,22 @@ function liveTick(live) {
       .catch(fehler);
   }
 
-  const beide = d.antworten[duell.spieler1][i] && d.antworten[duell.spieler2][i];
-  if ((beide || jetzt > d.start + dauer + 500) && live.weiterAngefragt !== i) {
+  const alle = teilnehmer(duell).every((s) => d.antworten[s][i]);
+  if ((alle || (dauer && jetzt > d.start + dauer + 500)) && live.weiterAngefragt !== i) {
     live.weiterAngefragt = i;
     liveWeiter(live, i);
   }
 }
 
-function liveKopf(duell) {
-  const { punkte } = duellErgebnis(duell);
-  const g = gegnerVon(duell);
+function punkteKopf(duell, punkte) {
   return `
-    <div class="karte spielstand-kopf live-kopf">
-      <div class="spieler-name">${esc(ich.name)}</div>
-      <div class="stand">${punkte[ich.id]} : ${punkte[g]}</div>
-      <div class="spieler-name">${esc(nameVon(g))}</div>
+    <div class="karte punkte-kopf">
+      ${reihenfolge(duell)
+        .map((s) => `<div class="${s === ich.id ? 'ich' : ''}"><div class="spieler-name">${esc(nameVon(s))}</div><div class="stand">${punkte[s]}</div></div>`)
+        .join('')}
     </div>`;
 }
+const liveKopf = (duell) => punkteKopf(duell, duellErgebnis(duell).punkte);
 
 function liveHinweis(text) {
   ansicht = 'live';
@@ -867,33 +987,37 @@ function liveHinweis(text) {
 function liveOffen(live) {
   ansicht = 'live';
   const duell = live.duell;
-  const g = gegnerVon(duell);
-  if (duell.spieler1 === ich.id) {
-    show(`
-      <div class="karte stapel mitte">
-        <div class="warte-animation">⚡</div>
-        <p>Warte, bis <b>${esc(nameVon(g))}</b> das Live-Battle annimmt …</p>
-        <p class="klein gedaempft">${esc(duell.daten.kategorie)} · ${duell.daten.fragen.length} Fragen · Dein Gegner muss die Seite geöffnet haben.</p>
-        <button class="btn" id="absagen">Absagen</button>
-      </div>`);
-  } else {
-    show(`
-      <div class="karte stapel mitte">
-        <div class="warte-animation">⚡</div>
-        <p><b>${esc(nameVon(g))}</b> fordert dich zum Live-Battle heraus!</p>
-        <p class="klein gedaempft">${esc(duell.daten.kategorie)} · ${duell.daten.fragen.length} Fragen à ${E.SEKUNDEN_LIVE} Sekunden</p>
-        <button class="btn primaer" id="annehmen">Annehmen</button>
-        <button class="btn" id="absagen">Ablehnen</button>
-      </div>`);
-  }
+  const d = duell.daten;
+  const angenommen = angenommenVon(duell);
+  const dabei = angenommen.includes(ich.id);
+  const liste = teilnehmer(duell)
+    .map((s) => `<li>${angenommen.includes(s) ? '✓' : '…'} ${onlinePunkt(s)}${esc(nameVon(s))}${s === duell.spieler1 ? ' <span class="gedaempft">(fordert heraus)</span>' : ''}</li>`)
+    .join('');
+  const info = `${esc(d.kategorie)} · ${d.fragen.length} Fragen · ${timerText(sekundenVon(duell))} pro Frage`;
+  show(`
+    <div class="karte stapel mitte">
+      <div class="warte-animation">⚡</div>
+      ${dabei
+        ? '<p>Warte, bis alle angenommen haben …</p>'
+        : `<p><b>${esc(nameVon(duell.spieler1))}</b> fordert dich zum Live-Battle heraus!</p>`}
+      <ul class="teilnehmer-liste">${liste}</ul>
+      <p class="klein gedaempft">${info}</p>
+      ${dabei ? '' : '<button class="btn primaer" id="annehmen">Annehmen</button>'}
+      <button class="btn" id="absagen">${dabei ? 'Absagen' : 'Ablehnen'}</button>
+    </div>`);
   on('#annehmen', async () => {
     try {
       live.uebernehmen(
         await duellAktualisieren(duell.id, (x) => {
           if (x.status !== 'offen') return null;
-          x.status = 'laeuft';
-          x.daten.index = 0;
-          x.daten.start = Date.now() + E.LIVE_PAUSE_MS;
+          const a = angenommenVon(x);
+          if (!a.includes(ich.id)) a.push(ich.id);
+          x.daten.angenommen = a;
+          if (teilnehmer(x).every((s) => a.includes(s))) {
+            x.status = 'laeuft';
+            x.daten.index = 0;
+            x.daten.start = Date.now() + E.LIVE_PAUSE_MS;
+          }
           return x;
         })
       );
@@ -941,9 +1065,11 @@ function livePause(live) {
 function liveAufloesung(duell, i, loesung) {
   const d = duell.daten;
   const frage = FRAGEN_TEXT.get(d.fragen[i]);
+  const dauer = liveDauer(duell);
   const zeile = (s) => {
     const a = d.antworten[s][i];
-    const text = !a ? '–' : a.r ? `✓ +${a.p} <span class="gedaempft">(${(a.ms / 1000).toFixed(1)} s)</span>` : a.ms >= LIVE_DAUER() ? '⏱ Zeit abgelaufen' : '✗ falsch';
+    const zeit = a && a.r && dauer ? ` <span class="gedaempft">(${(a.ms / 1000).toFixed(1)} s)</span>` : '';
+    const text = !a ? '–' : a.r ? `✓ +${a.p}${zeit}` : dauer && a.ms >= dauer ? '⏱ Zeit abgelaufen' : '✗ falsch';
     return `<div class="live-ergebnis"><span>${esc(s === ich.id ? 'Du' : nameVon(s))}</span><span class="${a && a.r ? 'ok' : 'nok'}">${text}</span></div>`;
   };
   return `
@@ -952,7 +1078,7 @@ function liveAufloesung(duell, i, loesung) {
       <p>${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</p>
       ${loesung ? `<p class="ok">✓ ${esc(loesung.richtig)}</p>` : ''}
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
-      ${zeile(ich.id)}${zeile(gegnerVon(duell))}
+      ${reihenfolge(duell).map(zeile).join('')}
     </div>`;
 }
 
@@ -967,17 +1093,19 @@ function liveFrage(live) {
   show(`
     ${liveKopf(duell)}
     <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}</span></div>
-    <div class="timer"><div class="timer-balken"></div></div>
+    ${liveDauer(duell) ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</div>
     ${antwortKnoepfe(live.optionen)}
     <p class="meldung" id="meine-meldung"></p>
-    <p class="gegner-status" id="gegner-status"></p>`);
+    <p class="gegner-status" id="gegner-status"></p>
+    <button class="link gedaempft" id="aufgeben">Aufgeben</button>`);
+  on('#aufgeben', () => aufgeben(live.duell).catch(fehler));
 
   if (d.antworten[ich.id][i]) {
     // Schon beantwortet (z. B. nach Neuladen)
     live.gewaehlt = -1;
     sperren(-1);
-    app.querySelector('#meine-meldung').textContent = 'Bereits beantwortet – warte auf die Auflösung.';
+    app.querySelector('#meine-meldung').textContent = 'Bereits beantwortet – warte auf die anderen.';
     return;
   }
   app.querySelectorAll('.antwort').forEach((k, idx) => (k.onclick = () => liveAntworten(live, frage, idx)));
@@ -987,15 +1115,16 @@ async function liveAntworten(live, frage, idx) {
   if (live.gewaehlt != null) return;
   const d = live.duell.daten;
   const i = d.index;
+  const dauer = liveDauer(live.duell);
   const ms = Date.now() - d.start;
-  if (ms > LIVE_DAUER()) return;
+  if (dauer && ms > dauer) return;
   live.gewaehlt = idx;
   sperren(idx);
   const phase = live.phase;
   try {
     const [loesung] = await loesungenLaden([frage.id]);
     const richtig = !!loesung && live.optionen[idx] === loesung.richtig;
-    const p = richtig ? livePunkte(ms) : 0;
+    const p = richtig ? livePunkte(ms, dauer) : 0;
     if (live.phase === phase) {
       markieren(live.optionen, idx, loesung && loesung.richtig);
       app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span>` : '<span class="nok">✗ Leider falsch</span>';
@@ -1013,22 +1142,23 @@ async function liveAntworten(live, frage, idx) {
   }
 }
 
-// Schaltet zur nächsten Frage, sobald beide geantwortet haben oder die Zeit um ist.
-// Beide Geräte versuchen das – durch die Versionsprüfung passiert es nur einmal.
+// Schaltet zur nächsten Frage, sobald alle geantwortet haben oder die Zeit um ist.
+// Alle Geräte versuchen das – durch die Versionsprüfung passiert es nur einmal.
 async function liveWeiter(live, i) {
   try {
     const neu = await duellAktualisieren(live.duell.id, (x) => {
       const d = x.daten;
       if (x.status !== 'laeuft' || d.index !== i) return null;
       const jetzt = Date.now();
-      const spieler = [x.spieler1, x.spieler2];
-      const beide = spieler.every((s) => d.antworten[s][i]);
-      if (!beide && jetzt < d.start + LIVE_DAUER()) return null;
+      const dauer = liveDauer(x);
+      const spieler = teilnehmer(x);
+      const alle = spieler.every((s) => d.antworten[s][i]);
+      if (!alle && (!dauer || jetzt < d.start + dauer)) return null;
       // Länger als eine Minute niemand da gewesen → Battle direkt beenden
-      const verwaist = jetzt > d.start + LIVE_DAUER() + 60000;
+      const verwaist = dauer && jetzt > d.start + dauer + 60000;
       const bis = verwaist ? d.fragen.length : i + 1;
       for (const s of spieler) {
-        for (let k = 0; k < bis; k++) if (!d.antworten[s][k]) d.antworten[s][k] = { r: 0, ms: LIVE_DAUER(), p: 0 };
+        for (let k = 0; k < bis; k++) if (!d.antworten[s][k]) d.antworten[s][k] = { r: 0, ms: dauer, p: 0 };
       }
       if (bis >= d.fragen.length) x.status = 'beendet';
       else {
@@ -1049,20 +1179,21 @@ function liveEnde(live) {
   ansicht = 'live';
   const duell = live.duell;
   const d = duell.daten;
-  const g = gegnerVon(duell);
+  const spieler = reihenfolge(duell);
   const e = ergebnisSatz(duell);
   const zelle = (a) => (!a ? '–' : a.r ? `<span class="ok">+${a.p}</span>` : '<span class="nok">✗</span>');
+  const beantwortet = d.antworten[ich.id].filter(Boolean).length;
   show(`
     ${liveKopf(duell)}
     <p class="meldung gross ${e.klasse}">${esc(e.text)}</p>
-    ${d.antworten[ich.id].length ? '<div id="live-aufloesung"></div>' : ''}
+    ${beantwortet ? '<div id="live-aufloesung"></div>' : ''}
     <div class="karte">
       <table class="tabelle">
-        <thead><tr><th>Frage</th><th>Du</th><th>${esc(nameVon(g))}</th></tr></thead>
+        <thead><tr><th>Frage</th>${spieler.map((s) => `<th>${esc(s === ich.id ? 'Du' : nameVon(s))}</th>`).join('')}</tr></thead>
         <tbody>${d.fragen
           .map((fid, i) => {
             const f = FRAGEN_TEXT.get(fid);
-            return `<tr><td class="klein">${esc(f ? f.frage : '–')}</td><td>${zelle(d.antworten[ich.id][i])}</td><td>${zelle(d.antworten[g][i])}</td></tr>`;
+            return `<tr><td class="klein">${esc(f ? f.frage : '–')}</td>${spieler.map((s) => `<td>${zelle(d.antworten[s][i])}</td>`).join('')}</tr>`;
           })
           .join('')}</tbody>
       </table>
@@ -1071,9 +1202,8 @@ function liveEnde(live) {
       <button class="btn primaer" id="revanche">Revanche</button>
       <a class="btn" href="#/">Zur Startseite</a>
     </div>`);
-  if (d.antworten[ich.id].length) liveAufloesungEinsetzen(live, d.fragen.length - 1);
-  const kategorie = d.kategorie === 'Alle Kategorien' ? '' : d.kategorie;
-  on('#revanche', () => duellStarten('live', g, kategorie).catch(fehler));
+  if (beantwortet) liveAufloesungEinsetzen(live, Math.min(d.index, d.fragen.length - 1));
+  on('#revanche', () => revanche(duell).catch(fehler));
 }
 
 // ===== Lernen =====
@@ -1092,7 +1222,7 @@ function lernenAuswahl() {
           ${KATEGORIEN.map((k) => `<option>${esc(k)}</option>`).join('')}
         </select>
       </label>
-      <label class="check"><input type="checkbox" id="mit-zeit"> Mit Zeitlimit (${E.SEKUNDEN_RUNDENDUELL} s)</label>
+      <label class="check"><input type="checkbox" id="mit-zeit"> Mit Zeitlimit (${E.LERNEN_SEKUNDEN} s)</label>
     </div>
     <div class="stapel">
       <button class="btn primaer" data-modus="schwach">🎯 Schwächen üben <small id="anz-schwach"></small></button>
@@ -1145,7 +1275,7 @@ function lernrunde(fragen, mitZeit) {
       frage,
       titel: `📚 ${frage.kategorie}`,
       info: `${i + 1}/${fragen.length}`,
-      sekunden: mitZeit ? E.SEKUNDEN_RUNDENDUELL : 0,
+      sekunden: mitZeit ? E.LERNEN_SEKUNDEN : 0,
       beiAntwort: (richtig) => {
         if (richtig) richtige++;
         else falsche.push(frage);
@@ -1240,13 +1370,11 @@ async function rangliste(filter = 'alle') {
   };
   for (const duell of duelle) {
     if (filter !== 'alle' && duell.modus !== filter) continue;
-    const { sieger } = duellErgebnis(duell);
-    for (const s of [duell.spieler1, duell.spieler2]) {
+    const { ergebnis } = duellErgebnis(duell);
+    for (const s of teilnehmer(duell)) {
       const e = eintrag(s);
       e.spiele++;
-      if (!sieger) e.u++;
-      else if (sieger === s) e.s++;
-      else e.n++;
+      e[ergebnis[s]]++;
     }
   }
   const liste = [...tabelle.values()]
@@ -1267,14 +1395,109 @@ async function rangliste(filter = 'alle') {
         <tbody>${liste
           .map((e, i) => `<tr class="${e.id === ich.id ? 'ich' : ''}">
             <td>${i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1}</td>
-            <td>${esc(nameVon(e.id))}</td>
+            <td>${onlinePunkt(e.id)}${esc(nameVon(e.id))}</td>
             <td>${e.s}/${e.u}/${e.n}</td>
             <td><b>${e.punkte}</b></td></tr>`)
           .join('')}</tbody>
       </table>
-      <p class="klein gedaempft">Sieg = 3 Punkte, Unentschieden = 1 Punkt.</p>
+      <p class="klein gedaempft">Sieg = 3 Punkte, Unentschieden bzw. geteilter Sieg = 1 Punkt. Im Duell zu dritt gewinnt nur der Erstplatzierte.</p>
     </div>` : '<p class="leer">Noch keine beendeten Duelle.</p>'}`);
   app.querySelectorAll('#filter button').forEach((b) => (b.onclick = () => rangliste(b.dataset.f).catch(fehler)));
+}
+
+// ===== Admin =====
+// Eigenes Admin-Passwort, nur für diese Browser-Sitzung gemerkt
+async function adminAnsicht() {
+  const adminPw = gespeichertSitzung('pruefi-admin');
+  if (!adminPw) return adminLogin();
+  const [spieler, duelle] = await Promise.all([ladeSpieler(), DB.alleDuelle()]);
+  ansicht = 'admin';
+  const anzahlDuelle = (id) => duelle.filter((d) => teilnehmer(d).includes(id)).length;
+  const datum = (iso) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const statusText = { offen: 'Einladung', laeuft: 'läuft', beendet: 'beendet', abgelehnt: 'abgesagt' };
+
+  show(`
+    <h2>Admin</h2>
+    <h3>Spieler (${spieler.length})</h3>
+    <div class="liste">${spieler
+      .map((s) => `
+        <div class="admin-zeile">
+          <div class="admin-info">${onlinePunkt(s.id)}<b>${esc(s.name)}</b>${s.id === ich.id ? ' <span class="gedaempft">(du)</span>' : ''}
+            <div class="klein gedaempft">${anzahlDuelle(s.id)} Duelle · seit ${datum(s.erstellt)}</div></div>
+          <button class="btn klein" data-lernstand="${esc(s.id)}">Lernstand ↺</button>
+          <button class="btn klein gefahr" data-spieler="${esc(s.id)}">Löschen</button>
+        </div>`)
+      .join('')}</div>
+    <h3>Duelle (${duelle.length})</h3>
+    <div class="liste">${duelle
+      .map((d) => `
+        <div class="admin-zeile">
+          <div class="admin-info"><b>${d.modus === 'live' ? '⚡' : '🔁'} ${teilnehmer(d).map((s) => esc(nameVon(s))).join(' · ')}</b>
+            <div class="klein gedaempft">${statusText[d.status] || d.status} · ${datum(d.aktualisiert)}</div></div>
+          <button class="btn klein gefahr" data-duell="${d.id}">Löschen</button>
+        </div>`)
+      .join('') || '<p class="leer">Keine Duelle.</p>'}</div>
+    <div class="stapel"><button class="btn" id="admin-ende">Admin abmelden</button></div>`);
+
+  const ausfuehren = async (frage, aktion) => {
+    if (!confirm(frage)) return;
+    try {
+      await aktion();
+      toast('Erledigt.');
+      adminAnsicht().catch(fehler);
+    } catch (e) {
+      fehler(e);
+    }
+  };
+  app.querySelectorAll('[data-spieler]').forEach((b) => {
+    const id = b.dataset.spieler;
+    b.onclick = () =>
+      ausfuehren(`„${nameVon(id)}“ endgültig löschen – inklusive aller Duelle (${anzahlDuelle(id)}) und des Lernstands?`, async () => {
+        await DB.adminSpielerLoeschen(adminPw, id);
+        if (id === ich.id) abmelden();
+      });
+  });
+  app.querySelectorAll('[data-lernstand]').forEach((b) => {
+    const id = b.dataset.lernstand;
+    b.onclick = () => ausfuehren(`Lernstand von „${nameVon(id)}“ zurücksetzen?`, () => DB.adminLernstandZuruecksetzen(adminPw, id));
+  });
+  app.querySelectorAll('[data-duell]').forEach((b) => {
+    b.onclick = () => ausfuehren('Dieses Duell endgültig löschen?', () => DB.adminDuellLoeschen(adminPw, b.dataset.duell));
+  });
+  on('#admin-ende', () => {
+    try { sessionStorage.removeItem('pruefi-admin'); } catch {}
+    gehe('#/');
+  });
+}
+
+function adminLogin() {
+  ansicht = 'admin-login';
+  show(`
+    <h2>Admin</h2>
+    <form id="admin-login" class="karte stapel">
+      <label>Admin-Passwort<input id="admin-pw" type="password" autocomplete="current-password" required></label>
+      <button class="btn primaer">Anmelden</button>
+    </form>`);
+  app.querySelector('#admin-pw').focus();
+  on('#admin-login', async (e) => {
+    e.preventDefault();
+    const pw = app.querySelector('#admin-pw').value;
+    try {
+      if (!(await DB.adminPruefen(pw))) return toast('Das Admin-Passwort stimmt nicht.');
+      try { sessionStorage.setItem('pruefi-admin', pw); } catch {}
+      adminAnsicht().catch(fehler);
+    } catch (err) {
+      fehler(err);
+    }
+  }, 'submit');
+}
+
+function gespeichertSitzung(schluessel) {
+  try {
+    return sessionStorage.getItem(schluessel);
+  } catch {
+    return null;
+  }
 }
 
 // ===== Start =====
