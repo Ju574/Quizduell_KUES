@@ -1,1 +1,4 @@
 .claude/
+# Fragen bleiben privat – sie liegen nur in Supabase
+fragen.json
+fragen-import.sql

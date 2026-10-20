@@ -1,6 +1,11 @@
 -- Prüfi-Duell: Datenbank einrichten
 -- Supabase → SQL Editor → New query → diesen kompletten Text einfügen → Run.
--- Das Skript kann gefahrlos mehrfach ausgeführt werden.
+-- Das Skript kann gefahrlos mehrfach ausgeführt werden (z. B. nach einem Update).
+-- Danach: gruppen-passwort.sql (einmalig) und fragen-import.sql ausführen.
+
+create extension if not exists pgcrypto with schema extensions;
+
+-- ===== Spieler, Duelle, Lernstand =====
 
 create table if not exists public.spieler (
   id text primary key,                         -- Name in Kleinbuchstaben
@@ -47,7 +52,7 @@ as $$
     zuletzt = now();
 $$;
 
--- Zugriffsrechte: Anmeldung nur per Name, daher dürfen alle lesen und schreiben – aber nichts löschen.
+-- Anmeldung nur per Name, daher dürfen alle lesen und schreiben – aber nichts löschen.
 alter table public.spieler enable row level security;
 alter table public.duelle enable row level security;
 alter table public.lernstand enable row level security;
@@ -84,3 +89,107 @@ begin
     alter publication supabase_realtime add table public.duelle;
   end if;
 end $$;
+
+-- ===== Fragen (geschützt) =====
+-- Die Tabellen sind von außen NICHT lesbar (keine Policies, keine Rechte).
+-- Zugriff nur über die Funktionen unten, und nur mit dem Gruppen-Passwort.
+
+create table if not exists public.einstellungen (
+  schluessel text primary key,
+  wert text not null
+);
+
+create table if not exists public.fragen (
+  id text primary key,
+  kategorie text not null,
+  frage text not null,
+  richtig text not null,
+  falsch text[] not null,
+  erklaerung text,
+  aktiv boolean not null default true,
+  geaendert timestamptz not null default now()
+);
+
+alter table public.einstellungen enable row level security;
+alter table public.fragen enable row level security;
+revoke all on public.einstellungen, public.fragen from anon, authenticated;
+
+create or replace function public.passwort_ok(p_passwort text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select exists (
+    select 1 from public.einstellungen
+    where schluessel = 'gruppen_passwort' and wert = crypt(coalesce(p_passwort, ''), wert)
+  );
+$$;
+
+-- Liste aller Fragen-IDs mit Kategorie (ohne Texte)
+create or replace function public.fragen_katalog(p_passwort text)
+returns table (id text, kategorie text)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  return query select f.id, f.kategorie from public.fragen f where f.aktiv order by f.kategorie, f.id;
+end $$;
+
+-- Fragetexte mit gemischten Antworten – OHNE Hinweis, welche richtig ist
+create or replace function public.fragen_holen(p_passwort text, p_ids text[])
+returns table (id text, kategorie text, frage text, antworten text[])
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  if coalesce(array_length(p_ids, 1), 0) > 20 then
+    raise exception 'Höchstens 20 Fragen pro Abruf';
+  end if;
+  return query
+    select f.id, f.kategorie, f.frage,
+           (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a)
+    from public.fragen f
+    where f.id = any(p_ids);
+end $$;
+
+-- Lösungen – die App ruft sie erst ab, nachdem eine Antwort gewählt wurde
+create or replace function public.loesungen_holen(p_passwort text, p_ids text[])
+returns table (id text, richtig text, erklaerung text)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  if coalesce(array_length(p_ids, 1), 0) > 20 then
+    raise exception 'Höchstens 20 Lösungen pro Abruf';
+  end if;
+  return query select f.id, f.richtig, f.erklaerung from public.fragen f where f.id = any(p_ids);
+end $$;
+
+revoke execute on function public.passwort_ok(text) from public;
+revoke execute on function public.fragen_katalog(text) from public;
+revoke execute on function public.fragen_holen(text, text[]) from public;
+revoke execute on function public.loesungen_holen(text, text[]) from public;
+grant execute on function public.passwort_ok(text) to anon, authenticated;
+grant execute on function public.fragen_katalog(text) to anon, authenticated;
+grant execute on function public.fragen_holen(text, text[]) to anon, authenticated;
+grant execute on function public.loesungen_holen(text, text[]) to anon, authenticated;

@@ -16,6 +16,7 @@ const E = {
 
 const app = document.getElementById('app');
 let ich = null;                  // { id, name } des angemeldeten Spielers
+let passwort = '';               // Gruppen-Passwort für den Zugriff auf die Fragen
 let ansicht = '';                // Name der gerade angezeigten Ansicht
 let frageTimer = null;
 let lernstand = new Map();       // frage_id → { richtig, falsch, serie }
@@ -23,26 +24,30 @@ let spielerAbo = null;
 const namen = new Map();         // spieler-id → Anzeigename
 const aufraeumer = [];
 
-// ===== Fragen laden & prüfen =====
-const FRAGEN_LISTE = [];
-const FRAGEN_NACH_ID = new Map();
-const FRAGEN_FEHLER = [];
+// ===== Fragen =====
+// Die Fragen liegen geschützt in der Datenbank. Geladen wird zuerst nur der Katalog (IDs + Kategorien),
+// Texte erst wenn eine Frage drankommt und die Lösung erst nach dem Antworten.
+let FRAGEN_LISTE = [];           // [{ id, kategorie }]
+let KATEGORIEN = [];
+const FRAGEN_TEXT = new Map();   // id → { id, kategorie, frage, antworten }
+const LOESUNGEN = new Map();     // id → { richtig, erklaerung }
+const MAX_PRO_ABRUF = 20;
 
-if (typeof FRAGEN === 'undefined' || !Array.isArray(FRAGEN)) {
-  FRAGEN_FEHLER.push('fragen.js konnte nicht geladen werden – vermutlich ein Tippfehler (z. B. fehlendes Komma oder Anführungszeichen).');
-} else {
-  FRAGEN.forEach((f, i) => {
-    if (!f || !f.id || !f.kategorie || !f.frage || !f.richtig || !Array.isArray(f.falsch) || !f.falsch.length) {
-      FRAGEN_FEHLER.push(`Frage Nr. ${i + 1} ist unvollständig (id, kategorie, frage, richtig und falsch werden gebraucht).`);
-    } else if (FRAGEN_NACH_ID.has(f.id)) {
-      FRAGEN_FEHLER.push(`Die id „${f.id}“ kommt doppelt vor.`);
-    } else {
-      FRAGEN_NACH_ID.set(f.id, f);
-      FRAGEN_LISTE.push(f);
-    }
-  });
+async function katalogLaden() {
+  FRAGEN_LISTE = await DB.fragenKatalog(passwort);
+  KATEGORIEN = [...new Set(FRAGEN_LISTE.map((f) => f.kategorie))];
 }
-const KATEGORIEN = [...new Set(FRAGEN_LISTE.map((f) => f.kategorie))];
+
+async function nachladen(ids, cache, abruf) {
+  const fehlend = [...new Set(ids)].filter((id) => !cache.has(id));
+  for (let i = 0; i < fehlend.length; i += MAX_PRO_ABRUF) {
+    const teil = await abruf(passwort, fehlend.slice(i, i + MAX_PRO_ABRUF));
+    teil.forEach((x) => cache.set(x.id, x));
+  }
+  return ids.map((id) => cache.get(id));
+}
+const fragenLaden = (ids) => nachladen(ids, FRAGEN_TEXT, DB.fragenHolen);
+const loesungenLaden = (ids) => nachladen(ids, LOESUNGEN, DB.loesungenHolen);
 
 // ===== Hilfsfunktionen =====
 const esc = (s) =>
@@ -117,14 +122,14 @@ async function duellAktualisieren(id, aendern) {
   throw new Error('Speichern fehlgeschlagen – bitte nochmal versuchen.');
 }
 
-function lernstandBuchen(frage, richtig) {
-  const e = lernstand.get(frage.id) || { richtig: 0, falsch: 0, serie: 0 };
-  lernstand.set(frage.id, {
+function lernstandBuchen(frageId, richtig) {
+  const e = lernstand.get(frageId) || { richtig: 0, falsch: 0, serie: 0 };
+  lernstand.set(frageId, {
     richtig: e.richtig + (richtig ? 1 : 0),
     falsch: e.falsch + (richtig ? 0 : 1),
     serie: richtig ? e.serie + 1 : 0,
   });
-  DB.lernstandBuchen(ich.id, frage.id, richtig).catch(fehler);
+  DB.lernstandBuchen(ich.id, frageId, richtig).catch(fehler);
 }
 
 function duellErgebnis(duell) {
@@ -153,21 +158,26 @@ function ergebnisSatz(duell) {
     : { text: `Verloren ${stand}${zusatz}`, klasse: 'nok' };
 }
 
-function antwortOptionen(frage) {
-  return shuffle([{ text: frage.richtig, richtig: true }, ...frage.falsch.map((text) => ({ text, richtig: false }))]);
-}
-
 function antwortKnoepfe(optionen) {
   return `<div class="antworten">${optionen
-    .map((o, i) => `<button class="antwort" data-i="${i}">${esc(o.text)}</button>`)
+    .map((text, i) => `<button class="antwort" data-i="${i}">${esc(text)}</button>`)
     .join('')}</div>`;
 }
 
-function markieren(optionen, gewaehlt) {
+// Färbt die Antworten ein: richtige grün, gewählte falsche rot
+function markieren(optionen, gewaehlt, richtigText) {
   app.querySelectorAll('.antwort').forEach((knopf, i) => {
     knopf.disabled = true;
-    if (optionen[i].richtig) knopf.classList.add('richtig');
+    knopf.classList.remove('gewaehlt');
+    if (optionen[i] === richtigText) knopf.classList.add('richtig');
     else if (i === gewaehlt) knopf.classList.add('falsch');
+  });
+}
+
+function sperren(gewaehlt) {
+  app.querySelectorAll('.antwort').forEach((knopf, i) => {
+    knopf.disabled = true;
+    if (i === gewaehlt) knopf.classList.add('gewaehlt');
   });
 }
 
@@ -186,11 +196,11 @@ function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
   frageTimer = setInterval(tick, 100);
 }
 
-// Zeigt eine Frage mit optionalem Zeitlimit.
+// Zeigt eine Frage mit optionalem Zeitlimit. Die Lösung wird erst nach dem Antworten geladen.
 // beiAntwort(richtig) wird sofort aufgerufen (kann ein Promise liefern), weiter() nach Klick auf „Weiter“.
 function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
   ansicht = 'frage';
-  const optionen = antwortOptionen(frage);
+  const optionen = shuffle(frage.antworten);
   show(`
     <div class="frage-kopf"><span>${esc(titel)}</span><span>${esc(info)}</span></div>
     ${sekunden ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
@@ -199,17 +209,33 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
     <div id="aufloesung" class="aufloesung"></div>`);
 
   let erledigt = false;
-  const aufloesen = (gewaehlt) => {
+  const aufloesen = async (gewaehlt) => {
     if (erledigt) return;
     erledigt = true;
     clearInterval(frageTimer);
-    const richtig = gewaehlt != null && optionen[gewaehlt].richtig;
-    markieren(optionen, gewaehlt);
-    const gespeichert = Promise.resolve(beiAntwort(richtig));
+    sperren(gewaehlt);
     const box = app.querySelector('#aufloesung');
+    box.innerHTML = '<p class="meldung gedaempft">…</p>';
+
+    let loesung;
+    try {
+      [loesung] = await loesungenLaden([frage.id]);
+    } catch (e) {
+      fehler(e);
+      box.innerHTML = '<p class="meldung nok">Verbindung unterbrochen.</p><button class="btn primaer" id="nochmal">Nochmal versuchen</button>';
+      box.querySelector('#nochmal').onclick = () => {
+        erledigt = false;
+        aufloesen(gewaehlt);
+      };
+      return;
+    }
+
+    const richtig = !!loesung && gewaehlt != null && optionen[gewaehlt] === loesung.richtig;
+    markieren(optionen, gewaehlt, loesung && loesung.richtig);
+    const gespeichert = Promise.resolve(beiAntwort(richtig));
     box.innerHTML = `
       <p class="meldung ${richtig ? 'ok' : 'nok'}">${gewaehlt == null ? '⏱ Zeit abgelaufen' : richtig ? '✓ Richtig!' : '✗ Leider falsch'}</p>
-      ${frage.erklaerung ? `<p class="erklaerung">${esc(frage.erklaerung)}</p>` : ''}
+      ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       <button class="btn primaer" id="weiter">Weiter</button>`;
     const knopf = box.querySelector('#weiter');
     knopf.addEventListener('click', async () => {
@@ -261,7 +287,27 @@ function gehe(hash) {
 const NAME_MUSTER = /^[\p{L}\p{N}][\p{L}\p{N} _-]{1,19}$/u;
 const idAusName = (name) => name.trim().toLowerCase().replace(/\s+/g, '-');
 
-function login() {
+function speichern(schluessel, wert) {
+  try {
+    if (wert == null) {
+      localStorage.removeItem(schluessel);
+      sessionStorage.removeItem(schluessel);
+    } else {
+      localStorage.setItem(schluessel, wert);
+      sessionStorage.setItem(schluessel, wert);
+    }
+  } catch {}
+}
+
+function gespeichert(schluessel) {
+  try {
+    return sessionStorage.getItem(schluessel) || localStorage.getItem(schluessel);
+  } catch {
+    return null;
+  }
+}
+
+function login(hinweis) {
   ansicht = 'login';
   topbarAktualisieren();
   show(`
@@ -270,47 +316,64 @@ function login() {
       <h1>Prüfi-Duell</h1>
       <p>Quizduell für die Kfz-Prüfingenieur-Ausbildung</p>
     </div>
+    ${hinweis ? `<p class="warnung mitte">${esc(hinweis)}</p>` : ''}
     <form id="login" class="karte stapel">
       <label>Dein Name
         <input id="name" maxlength="20" autocomplete="nickname" autocapitalize="words" required>
       </label>
+      <label ${passwort ? 'hidden' : ''}>Gruppen-Passwort
+        <input id="passwort" type="password" autocomplete="current-password" ${passwort ? '' : 'required'}>
+      </label>
       <button class="btn primaer">Weiter</button>
-      <p class="klein gedaempft">Kein Passwort nötig – merk dir einfach deinen Namen.</p>
+      <p class="klein gedaempft">Das Gruppen-Passwort bekommst du von deiner Lerngruppe. Für dich selbst brauchst du kein Passwort – merk dir einfach deinen Namen.</p>
     </form>
-    <div id="neu-bestaetigen"></div>
-    ${FRAGEN_FEHLER.map((f) => `<p class="warnung">⚠ ${esc(f)}</p>`).join('')}`);
+    <div id="neu-bestaetigen"></div>`);
 
-  const feld = app.querySelector('#name');
-  feld.focus();
+  app.querySelector('#name').focus();
   on('#login', async (e) => {
     e.preventDefault();
-    const name = feld.value.trim().replace(/\s+/g, ' ');
+    const name = app.querySelector('#name').value.trim().replace(/\s+/g, ' ');
     if (!NAME_MUSTER.test(name)) return toast('Bitte 2–20 Zeichen: Buchstaben, Zahlen, Leerzeichen, - oder _.');
-    const id = idAusName(name);
-    const vorhanden = await DB.spielerHolen(id);
-    if (vorhanden) return anmelden(vorhanden);
-    const box = app.querySelector('#neu-bestaetigen');
-    box.innerHTML = `
-      <div class="karte stapel">
-        <p>Es gibt noch keinen Spieler <b>${esc(name)}</b>. Neu anlegen?</p>
-        <button class="btn primaer" id="anlegen">Ja, „${esc(name)}“ anlegen</button>
-      </div>`;
-    box.querySelector('#anlegen').onclick = async () => {
-      try {
-        anmelden(await DB.spielerAnlegen(id, name));
-      } catch (err) {
-        fehler(err);
+    try {
+      if (!passwort) {
+        const pw = app.querySelector('#passwort').value;
+        if (!(await DB.passwortPruefen(pw))) return toast('Das Gruppen-Passwort stimmt nicht.');
+        passwort = pw;
+        speichern('pruefi-pw', pw);
       }
-    };
+      const id = idAusName(name);
+      const vorhanden = await DB.spielerHolen(id);
+      if (vorhanden) return anmelden(vorhanden);
+      const box = app.querySelector('#neu-bestaetigen');
+      box.innerHTML = `
+        <div class="karte stapel">
+          <p>Es gibt noch keinen Spieler <b>${esc(name)}</b>. Neu anlegen?</p>
+          <button class="btn primaer" id="anlegen">Ja, „${esc(name)}“ anlegen</button>
+        </div>`;
+      box.querySelector('#anlegen').onclick = async () => {
+        try {
+          anmelden(await DB.spielerAnlegen(id, name));
+        } catch (err) {
+          fehler(err);
+        }
+      };
+    } catch (err) {
+      fehler(err);
+    }
   }, 'submit');
 }
 
 async function anmelden(spieler) {
-  ich = { id: spieler.id, name: spieler.name };
   try {
-    localStorage.setItem('pruefi-ich', JSON.stringify(ich));
-    sessionStorage.setItem('pruefi-ich', JSON.stringify(ich));
-  } catch {}
+    await katalogLaden();
+  } catch (e) {
+    // Gruppen-Passwort wurde geändert oder ist falsch
+    passwort = '';
+    speichern('pruefi-pw', null);
+    return login('Bitte gib das (neue) Gruppen-Passwort ein.');
+  }
+  ich = { id: spieler.id, name: spieler.name };
+  speichern('pruefi-ich', JSON.stringify(ich));
   const [, zeilen] = await Promise.all([ladeSpieler(), DB.lernstandVon(ich.id)]);
   lernstand = new Map(zeilen.map((z) => [z.frage_id, z]));
   if (spielerAbo) spielerAbo();
@@ -320,10 +383,7 @@ async function anmelden(spieler) {
 }
 
 function abmelden() {
-  try {
-    localStorage.removeItem('pruefi-ich');
-    sessionStorage.removeItem('pruefi-ich');
-  } catch {}
+  speichern('pruefi-ich', null);
   if (spielerAbo) spielerAbo();
   ich = null;
   location.hash = '#/';
@@ -376,8 +436,8 @@ async function startseite() {
     liste.length ? `<section><h3>${titel}</h3><div class="liste">${liste.map(fn).join('')}</div></section>` : '';
   const rundeInfo = (d) => `Runde ${Math.max(1, d.daten.runden.length)}/${d.daten.anzahl}`;
 
-  const gesehen = [...lernstand.values()];
-  const sicher = gesehen.filter((l) => l.serie >= E.SICHER_AB_SERIE).length;
+  const imKatalog = new Set(FRAGEN_LISTE.map((f) => f.id));
+  const sicher = [...lernstand.entries()].filter(([id, l]) => imKatalog.has(id) && l.serie >= E.SICHER_AB_SERIE).length;
 
   show(`
     <h2 class="begruessung">Hallo ${esc(ich.name)} 👋</h2>
@@ -388,6 +448,7 @@ async function startseite() {
       <a class="kachel" href="#/rangliste"><span>🏆</span>Rangliste</a>
     </div>
     <p class="klein gedaempft mitte">${sicher} von ${FRAGEN_LISTE.length} Fragen sicher · ${KATEGORIEN.length} Kategorien</p>
+    ${!FRAGEN_LISTE.length ? '<p class="warnung mitte">Es sind noch keine Fragen in der Datenbank.</p>' : ''}
     ${abschnitt('⚡ Live-Herausforderungen', einladungen, (d) => zeile(d, 'Annehmen?', true))}
     ${abschnitt('Live-Battle läuft', liveLaufend, (d) => zeile(d, 'Weiterspielen', true))}
     ${abschnitt('Du bist dran', amZug, (d) => zeile(d, rundeInfo(d), true))}
@@ -396,8 +457,7 @@ async function startseite() {
       const e = ergebnisSatz(d);
       return zeile(d, `<span class="${e.klasse}">${esc(e.text)}</span>`);
     })}
-    ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}
-    ${FRAGEN_FEHLER.map((f) => `<p class="warnung">⚠ ${esc(f)}</p>`).join('')}`);
+    ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}`);
 }
 
 // ===== Neues Duell =====
@@ -444,13 +504,14 @@ async function neuesDuell() {
     liste.innerHTML = treffer.length
       ? treffer.map((s) => `<button class="duell-zeile" data-id="${esc(s.id)}"><span class="duell-gegner">${esc(s.name)}</span><span class="duell-status">Herausfordern ›</span></button>`).join('')
       : `<p class="leer">${spieler.length ? 'Niemand gefunden.' : 'Noch keine anderen Spieler. Schick deinen Mitstudenten den Link zur Seite!'}</p>`;
-    liste.querySelectorAll('button').forEach((b) => (b.onclick = () => duellStarten(modus, b.dataset.id, app.querySelector('#kategorie').value)));
+    liste.querySelectorAll('button').forEach((b) => (b.onclick = () => duellStarten(modus, b.dataset.id, app.querySelector('#kategorie').value).catch(fehler)));
   };
   on('#suche', zeichnen, 'input');
   zeichnen();
 }
 
 async function duellStarten(modus, gegner, kategorie) {
+  if (!FRAGEN_LISTE.length) return toast('Es sind noch keine Fragen in der Datenbank.');
   let duell;
   if (modus === 'runden') {
     duell = await DB.duellAnlegen({
@@ -482,6 +543,7 @@ async function duellStarten(modus, gegner, kategorie) {
 async function duellAnzeigen(id) {
   const duell = await DB.duellLaden(id);
   if (duell.spieler1 !== ich.id && duell.spieler2 !== ich.id) throw new Error('Dieses Duell gehört nicht dir.');
+  if (!namen.has(duell.spieler1) || !namen.has(duell.spieler2)) await ladeSpieler();
   if (duell.modus === 'live') return liveAnzeigen(duell);
   beimVerlassen(
     DB.abonniereDuell(id, (neu) => {
@@ -643,8 +705,9 @@ async function kategorieWaehlen(duell) {
   });
 }
 
-function rundeSpielen(duell, idx) {
+async function rundeSpielen(duell, idx) {
   const runde = duell.daten.runden[idx];
+  await fragenLaden(runde.fragen);
   // Jede Antwort wird sofort gespeichert – so kann eine Frage nicht durch Neuladen wiederholt werden
   const antwortSpeichern = (j, wert) =>
     duellAktualisieren(duell.id, (x) => {
@@ -656,9 +719,9 @@ function rundeSpielen(duell, idx) {
 
   const naechste = async (j) => {
     if (j >= runde.fragen.length) return rundeErgebnis(duell.id, idx);
-    const frage = FRAGEN_NACH_ID.get(runde.fragen[j]);
+    const frage = FRAGEN_TEXT.get(runde.fragen[j]);
     if (!frage) {
-      // Frage wurde inzwischen aus fragen.js entfernt
+      // Frage wurde inzwischen aus der Datenbank entfernt
       await antwortSpeichern(j, 0);
       return naechste(j + 1);
     }
@@ -668,13 +731,13 @@ function rundeSpielen(duell, idx) {
       info: `Frage ${j + 1}/${runde.fragen.length}`,
       sekunden: E.SEKUNDEN_RUNDENDUELL,
       beiAntwort: (richtig) => {
-        lernstandBuchen(frage, richtig);
+        lernstandBuchen(frage.id, richtig);
         return antwortSpeichern(j, richtig ? 1 : 0);
       },
       weiter: () => naechste(j + 1).catch(fehler),
     });
   };
-  naechste((runde.antworten[ich.id] || []).length).catch(fehler);
+  await naechste((runde.antworten[ich.id] || []).length);
 }
 
 async function rundeErgebnis(id, idx) {
@@ -683,6 +746,7 @@ async function rundeErgebnis(id, idx) {
   const g = gegnerVon(duell);
   const meine = runde.antworten[ich.id] || [];
   const seine = runde.antworten[g];
+  const [fragen, loesungen] = await Promise.all([fragenLaden(runde.fragen), loesungenLaden(runde.fragen)]);
   ansicht = 'runden-ergebnis';
   show(`
     <div class="frage-kopf"><span>Runde ${idx + 1} · ${esc(runde.kategorie)}</span><span>gegen ${esc(nameVon(g))}</span></div>
@@ -693,11 +757,12 @@ async function rundeErgebnis(id, idx) {
     <div class="liste">
       ${runde.fragen
         .map((fid, j) => {
-          const f = FRAGEN_NACH_ID.get(fid);
+          const f = fragen[j];
+          const l = loesungen[j];
           return `<div class="aufloesung-zeile">
             <span class="punkt ${meine[j] ? 'ok' : 'nok'}"></span>
             <div><div>${esc(f ? f.frage : 'Frage nicht mehr vorhanden')}</div>
-            ${f ? `<div class="klein ok">✓ ${esc(f.richtig)}</div>` : ''}</div>
+            ${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}</div>
           </div>`;
         })
         .join('')}
@@ -710,7 +775,8 @@ async function rundeErgebnis(id, idx) {
 const LIVE_DAUER = () => E.SEKUNDEN_LIVE * 1000;
 const livePunkte = (ms) => 10 + Math.round(10 * Math.max(0, 1 - ms / LIVE_DAUER()));
 
-function liveAnzeigen(duell) {
+async function liveAnzeigen(duell) {
+  await fragenLaden(duell.daten.fragen);
   const live = { duell, phase: '', weiterAngefragt: -1, optionen: [], gewaehlt: null };
   const uebernehmen = (neu) => {
     if (neu.version >= live.duell.version) {
@@ -766,9 +832,13 @@ function liveTick(live) {
   const meineAntwort = d.antworten[ich.id][i];
   if (!meineAntwort && live.gewaehlt == null && jetzt > d.start + dauer) {
     live.gewaehlt = -1;
-    markieren(live.optionen, -1);
+    sperren(-1);
     const m = app.querySelector('#meine-meldung');
     if (m) m.innerHTML = '<span class="nok">⏱ Zeit abgelaufen</span>';
+    const phase = live.phase;
+    loesungenLaden([d.fragen[i]])
+      .then(([l]) => live.phase === phase && l && markieren(live.optionen, -1, l.richtig))
+      .catch(fehler);
   }
 
   const beide = d.antworten[duell.spieler1][i] && d.antworten[duell.spieler2][i];
@@ -845,6 +915,17 @@ function liveOffen(live) {
   });
 }
 
+// Lädt die Lösung zu Frage i nach und setzt die Auflösung in #live-aufloesung ein
+function liveAufloesungEinsetzen(live, i) {
+  const phase = live.phase;
+  loesungenLaden([live.duell.daten.fragen[i]])
+    .then(([l]) => {
+      const box = app.querySelector('#live-aufloesung');
+      if (box && live.phase === phase) box.innerHTML = liveAufloesung(live.duell, i, l);
+    })
+    .catch(fehler);
+}
+
 function livePause(live) {
   ansicht = 'live';
   const duell = live.duell;
@@ -852,13 +933,14 @@ function livePause(live) {
   const i = d.index;
   show(`
     ${liveKopf(duell)}
-    ${i > 0 ? liveAufloesung(duell, i - 1) : '<p class="meldung gross">Gleich geht’s los!</p>'}
+    ${i > 0 ? '<div id="live-aufloesung"></div>' : '<p class="meldung gross">Gleich geht’s los!</p>'}
     <p class="countdown-text">Frage ${i + 1} von ${d.fragen.length} in <span id="countdown"></span> …</p>`);
+  if (i > 0) liveAufloesungEinsetzen(live, i - 1);
 }
 
-function liveAufloesung(duell, i) {
+function liveAufloesung(duell, i, loesung) {
   const d = duell.daten;
-  const frage = FRAGEN_NACH_ID.get(d.fragen[i]);
+  const frage = FRAGEN_TEXT.get(d.fragen[i]);
   const zeile = (s) => {
     const a = d.antworten[s][i];
     const text = !a ? '–' : a.r ? `✓ +${a.p} <span class="gedaempft">(${(a.ms / 1000).toFixed(1)} s)</span>` : a.ms >= LIVE_DAUER() ? '⏱ Zeit abgelaufen' : '✗ falsch';
@@ -868,8 +950,8 @@ function liveAufloesung(duell, i) {
     <div class="karte">
       <p class="klein gedaempft">Frage ${i + 1}</p>
       <p>${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</p>
-      ${frage ? `<p class="ok">✓ ${esc(frage.richtig)}</p>` : ''}
-      ${frage && frage.erklaerung ? `<p class="erklaerung">${esc(frage.erklaerung)}</p>` : ''}
+      ${loesung ? `<p class="ok">✓ ${esc(loesung.richtig)}</p>` : ''}
+      ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       ${zeile(ich.id)}${zeile(gegnerVon(duell))}
     </div>`;
 }
@@ -879,8 +961,8 @@ function liveFrage(live) {
   const duell = live.duell;
   const d = duell.daten;
   const i = d.index;
-  const frage = FRAGEN_NACH_ID.get(d.fragen[i]);
-  live.optionen = frage ? antwortOptionen(frage) : [];
+  const frage = FRAGEN_TEXT.get(d.fragen[i]);
+  live.optionen = frage ? shuffle(frage.antworten) : [];
   live.gewaehlt = null;
   show(`
     ${liveKopf(duell)}
@@ -894,7 +976,7 @@ function liveFrage(live) {
   if (d.antworten[ich.id][i]) {
     // Schon beantwortet (z. B. nach Neuladen)
     live.gewaehlt = -1;
-    markieren(live.optionen, -1);
+    sperren(-1);
     app.querySelector('#meine-meldung').textContent = 'Bereits beantwortet – warte auf die Auflösung.';
     return;
   }
@@ -908,12 +990,17 @@ async function liveAntworten(live, frage, idx) {
   const ms = Date.now() - d.start;
   if (ms > LIVE_DAUER()) return;
   live.gewaehlt = idx;
-  const richtig = live.optionen[idx].richtig;
-  const p = richtig ? livePunkte(ms) : 0;
-  markieren(live.optionen, idx);
-  app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span>` : '<span class="nok">✗ Leider falsch</span>';
-  lernstandBuchen(frage, richtig);
+  sperren(idx);
+  const phase = live.phase;
   try {
+    const [loesung] = await loesungenLaden([frage.id]);
+    const richtig = !!loesung && live.optionen[idx] === loesung.richtig;
+    const p = richtig ? livePunkte(ms) : 0;
+    if (live.phase === phase) {
+      markieren(live.optionen, idx, loesung && loesung.richtig);
+      app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span>` : '<span class="nok">✗ Leider falsch</span>';
+    }
+    lernstandBuchen(frage.id, richtig);
     live.uebernehmen(
       await duellAktualisieren(live.duell.id, (x) => {
         if (x.status !== 'laeuft' || x.daten.index !== i || x.daten.antworten[ich.id][i]) return null;
@@ -968,13 +1055,13 @@ function liveEnde(live) {
   show(`
     ${liveKopf(duell)}
     <p class="meldung gross ${e.klasse}">${esc(e.text)}</p>
-    ${d.antworten[ich.id].length ? liveAufloesung(duell, d.fragen.length - 1) : ''}
+    ${d.antworten[ich.id].length ? '<div id="live-aufloesung"></div>' : ''}
     <div class="karte">
       <table class="tabelle">
         <thead><tr><th>Frage</th><th>Du</th><th>${esc(nameVon(g))}</th></tr></thead>
         <tbody>${d.fragen
           .map((fid, i) => {
-            const f = FRAGEN_NACH_ID.get(fid);
+            const f = FRAGEN_TEXT.get(fid);
             return `<tr><td class="klein">${esc(f ? f.frage : '–')}</td><td>${zelle(d.antworten[ich.id][i])}</td><td>${zelle(d.antworten[g][i])}</td></tr>`;
           })
           .join('')}</tbody>
@@ -984,6 +1071,7 @@ function liveEnde(live) {
       <button class="btn primaer" id="revanche">Revanche</button>
       <a class="btn" href="#/">Zur Startseite</a>
     </div>`);
+  if (d.antworten[ich.id].length) liveAufloesungEinsetzen(live, d.fragen.length - 1);
   const kategorie = d.kategorie === 'Alle Kategorien' ? '' : d.kategorie;
   on('#revanche', () => duellStarten('live', g, kategorie).catch(fehler));
 }
@@ -1022,22 +1110,27 @@ function lernenAuswahl() {
   zaehlen();
 
   app.querySelectorAll('[data-modus]').forEach((b) => {
-    b.onclick = () => {
+    b.onclick = async () => {
       const modus = b.dataset.modus;
-      let fragen = shuffle(pool());
+      let auswahl = shuffle(pool());
       if (modus === 'schwach') {
         const quote = (f) => {
           const e = lernstand.get(f.id);
           return e.richtig / (e.richtig + e.falsch);
         };
-        fragen = fragen.filter(schwach).sort((a, b2) => quote(a) - quote(b2));
+        auswahl = auswahl.filter(schwach).sort((a, b2) => quote(a) - quote(b2));
       }
-      if (modus === 'neu') fragen = fragen.filter((f) => !lernstand.has(f.id));
-      fragen = fragen.slice(0, E.LERNEN_FRAGEN);
-      if (!fragen.length) {
+      if (modus === 'neu') auswahl = auswahl.filter((f) => !lernstand.has(f.id));
+      auswahl = auswahl.slice(0, E.LERNEN_FRAGEN);
+      if (!auswahl.length) {
         return toast(modus === 'schwach' ? 'Keine Schwächen gefunden – stark! 💪' : 'Keine neuen Fragen mehr in dieser Auswahl.');
       }
-      lernrunde(fragen, app.querySelector('#mit-zeit').checked);
+      try {
+        const fragen = (await fragenLaden(auswahl.map((f) => f.id))).filter(Boolean);
+        lernrunde(fragen, app.querySelector('#mit-zeit').checked);
+      } catch (e) {
+        fehler(e);
+      }
     };
   });
 }
@@ -1056,7 +1149,7 @@ function lernrunde(fragen, mitZeit) {
       beiAntwort: (richtig) => {
         if (richtig) richtige++;
         else falsche.push(frage);
-        lernstandBuchen(frage, richtig);
+        lernstandBuchen(frage.id, richtig);
       },
       weiter: () => naechste(i + 1),
     });
@@ -1072,7 +1165,10 @@ function lernEnde(fragen, richtige, falsche, mitZeit) {
     </div>
     ${falsche.length ? `<h3>Das solltest du dir nochmal anschauen</h3>
     <div class="liste">${falsche
-      .map((f) => `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div><div class="klein ok">✓ ${esc(f.richtig)}</div>${f.erklaerung ? `<div class="klein gedaempft">${esc(f.erklaerung)}</div>` : ''}</div></div>`)
+      .map((f) => {
+        const l = LOESUNGEN.get(f.id);
+        return `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div>${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}${l && l.erklaerung ? `<div class="klein gedaempft">${esc(l.erklaerung)}</div>` : ''}</div></div>`;
+      })
       .join('')}</div>` : ''}
     <div class="stapel">
       ${falsche.length ? '<button class="btn primaer" id="wiederholen">Fehler wiederholen</button>' : ''}
@@ -1183,15 +1279,18 @@ async function rangliste(filter = 'alle') {
 
 // ===== Start =====
 async function boot() {
-  document.getElementById('demo-hinweis').hidden = DB.modus !== 'demo';
+  const demo = document.getElementById('demo-hinweis');
+  demo.hidden = DB.modus !== 'demo';
+  if (DB.modus === 'demo') demo.innerHTML += ' Gruppen-Passwort im Demo-Modus: <code>demo</code>';
   window.addEventListener('hashchange', route);
-  let gespeichert = null;
+  passwort = gespeichert('pruefi-pw') || '';
+  let ichGespeichert = null;
   try {
-    gespeichert = JSON.parse(sessionStorage.getItem('pruefi-ich') || localStorage.getItem('pruefi-ich'));
+    ichGespeichert = JSON.parse(gespeichert('pruefi-ich'));
   } catch {}
-  if (gespeichert) {
+  if (ichGespeichert && passwort) {
     try {
-      const spieler = await DB.spielerHolen(gespeichert.id);
+      const spieler = await DB.spielerHolen(ichGespeichert.id);
       if (spieler) return anmelden(spieler);
     } catch (e) {
       fehler(e);

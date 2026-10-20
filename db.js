@@ -9,6 +9,9 @@
 //   duelleVon(spielerId), beendeteDuelle()
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
+//   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie }]
+//   fragenHolen(pw, ids) → [{ id, kategorie, frage, antworten }]   (max. 20, ohne Lösung)
+//   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung }]       (max. 20)
 
 const DB = (() => {
   const cfg = window.PRUEFI_CONFIG || {};
@@ -86,6 +89,16 @@ function supabaseBackend(cfg) {
     abonniereDuell: (id, callback) => abonniere('duell', [`id=eq.${id}`], callback),
     abonniereSpieler: (spielerId, callback) =>
       abonniere('spieler', [`spieler1=eq.${spielerId}`, `spieler2=eq.${spielerId}`], callback),
+    async passwortPruefen(pw) {
+      return pruefe(await sb.rpc('passwort_ok', { p_passwort: pw }));
+    },
+    fragenKatalog: (pw) => alle(() => sb.rpc('fragen_katalog', { p_passwort: pw })),
+    async fragenHolen(pw, ids) {
+      return pruefe(await sb.rpc('fragen_holen', { p_passwort: pw, p_ids: ids }));
+    },
+    async loesungenHolen(pw, ids) {
+      return pruefe(await sb.rpc('loesungen_holen', { p_passwort: pw, p_ids: ids }));
+    },
   };
 }
 
@@ -194,5 +207,42 @@ function demoBackend() {
       zuhoerer.add(f);
       return () => zuhoerer.delete(f);
     },
+    // Im Demo-Modus kommen die Fragen aus der lokalen fragen.json, Gruppen-Passwort ist „demo“.
+    async passwortPruefen(pw) {
+      return pw === 'demo';
+    },
+    async fragenKatalog(pw) {
+      return (await demoFragen(pw)).map(({ id, kategorie }) => ({ id, kategorie }));
+    },
+    async fragenHolen(pw, ids) {
+      return (await demoFragen(pw))
+        .filter((f) => ids.includes(f.id))
+        .map((f) => ({ id: f.id, kategorie: f.kategorie, frage: f.frage, antworten: mischen([f.richtig, ...f.falsch]) }));
+    },
+    async loesungenHolen(pw, ids) {
+      return (await demoFragen(pw))
+        .filter((f) => ids.includes(f.id))
+        .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null }));
+    },
   };
+}
+
+let demoFragenCache = null;
+async function demoFragen(pw) {
+  if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+  if (!demoFragenCache) {
+    const antwort = await fetch('fragen.json');
+    if (!antwort.ok) throw new Error('fragen.json fehlt – die wird nur für den Demo-Modus gebraucht.');
+    demoFragenCache = await antwort.json();
+  }
+  return demoFragenCache;
+}
+
+function mischen(liste) {
+  const a = [...liste];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }

@@ -1,66 +1,58 @@
 # 🔧 Prüfi-Duell
 
 Quizduell für die Kfz-Prüfingenieur-Ausbildung, mit Rundenduell, Live-Battle, Lernmodus, Statistik und Rangliste.
-Die Seite läuft auf GitHub Pages, die Daten liegen in einer kostenlosen Supabase-Datenbank.
+Die Seite läuft auf GitHub Pages, die Daten liegen in Supabase.
+
+**Die Fragen stehen nicht in diesem Repository.** Sie liegen geschützt in der Datenbank und sind nur mit dem Gruppen-Passwort abrufbar. Die richtige Antwort wird erst nach dem Antworten geladen.
 
 ## Dateien
 
 | Datei | Inhalt |
 |---|---|
-| `index.html`, `style.css`, `app.js` | Die Webseite selbst |
+| `index.html`, `style.css`, `app.js` | Die Webseite |
 | `db.js` | Datenbankzugriff (Supabase oder Demo-Modus) |
-| `config.js` | **Hier kommen deine Supabase-Zugangsdaten rein** |
-| `fragen.js` | **Der Fragenkatalog** |
-| `supabase.sql` | Einmalig in Supabase ausführen, legt die Tabellen an |
+| `config.js` | Supabase-Adresse und öffentlicher Schlüssel |
+| `supabase.sql` | Legt Tabellen und Schutzfunktionen an (mehrfach ausführbar) |
+| `gruppen-passwort.sql` | Setzt oder ändert das Gruppen-Passwort |
+| `werkzeuge/fragen-zu-sql.js` | Macht aus `fragen.json` ein Import-Skript für Supabase |
 
-Ohne Eintrag in `config.js` läuft die Seite im **Demo-Modus**: Alles funktioniert, wird aber nur im eigenen Browser gespeichert.
+`fragen.json` und `fragen-import.sql` sind über `.gitignore` ausgeschlossen und kommen nie ins Repository.
 
-## 1. Datenbank einrichten (Supabase, ca. 5 Minuten)
+## Einrichtung (einmalig)
 
-1. Auf [supabase.com](https://supabase.com) ein kostenloses Konto anlegen → **New project** (Region: z. B. Frankfurt).
-2. Links **SQL Editor** → **New query** → den kompletten Inhalt von `supabase.sql` einfügen → **Run**.
-3. **Project Settings → API** (bzw. **API Keys**): die **Project URL** und den **anon / publishable key** kopieren.
-4. Beides in `config.js` eintragen:
-   ```js
-   window.PRUEFI_CONFIG = {
-     SUPABASE_URL: 'https://abcdefgh.supabase.co',
-     SUPABASE_KEY: 'eyJhbGciOi…',
-   };
-   ```
-   Der anon/publishable Key darf öffentlich sein. Den **service_role / secret key** dagegen **niemals** eintragen.
+Im Supabase-Dashboard unter **SQL Editor → New query** nacheinander ausführen:
+1. `supabase.sql`
+2. `gruppen-passwort.sql` (vorher das Passwort eintragen)
+3. `fragen-import.sql`
 
-## 2. Auf GitHub veröffentlichen
+In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der darf öffentlich sein. Der **secret/service_role key** gehört niemals hierher.
 
-1. Auf [github.com](https://github.com) → **New repository** → Name z. B. `pruefi-duell`, **Public** → Create.
-2. **Add file → Upload files** → alle Dateien oben hineinziehen → **Commit changes**.
-3. **Settings → Pages** → Source: **Deploy from a branch** → Branch **main**, Ordner **/ (root)** → Save.
-4. Nach ca. 1 Minute ist die Seite erreichbar unter `https://<dein-github-name>.github.io/pruefi-duell/`.
-   Diesen Link an die Mitstudenten schicken. Auf dem Handy lässt er sich über „Zum Startbildschirm hinzufügen“ wie eine App ablegen.
+## Fragen ergänzen oder korrigieren
 
-## Fragen hinzufügen
+1. Fragen in `fragen.json` bearbeiten (Format siehe unten).
+2. `node werkzeuge/fragen-zu-sql.js` ausführen. Das prüft die Datei und erzeugt `fragen-import.sql`.
+3. `fragen-import.sql` im Supabase SQL Editor ausführen.
 
-In `fragen.js` (auf GitHub direkt über das Stift-Symbol bearbeitbar):
-
-```js
+```json
 {
-  id: 'br-006',                       // eindeutig, NIE nachträglich ändern
-  kategorie: 'Bremsen',
-  frage: 'Wie heißt …?',
-  richtig: 'Die richtige Antwort',
-  falsch: ['Falsch 1', 'Falsch 2', 'Falsch 3'],
-  erklaerung: 'Optional: wird nach dem Beantworten angezeigt.',
-},
+  "id": "r1-01",
+  "kategorie": "Recht · Rechtsvorschriften",
+  "frage": "Wie heißt …?",
+  "richtig": "Die richtige Antwort",
+  "falsch": ["Falsch 1", "Falsch 2", "Falsch 3"],
+  "erklaerung": "Optional: wird nach dem Beantworten angezeigt."
+}
 ```
 
-- Lernstand und laufende Duelle hängen an der `id`. Den Text einer Frage darfst du korrigieren, die `id` bleibt aber gleich.
-- Für ein Rundenduell braucht eine Kategorie mindestens 3 Fragen.
-- Fehler in `fragen.js` (z. B. ein fehlendes Komma) werden auf der Startseite als Warnung angezeigt.
+- Die `id` darf sich **nie** ändern, denn Lernstand und Duelle hängen daran. Texte darf man korrigieren.
+- Fragen, die aus `fragen.json` entfernt werden, werden beim nächsten Import deaktiviert, aber nicht gelöscht.
+- Eine Kategorie braucht mindestens 3 Fragen, um im Rundenduell zu erscheinen.
 
 ## Spielmodi
 
-- **🔁 Rundenduell**: 6 Runden à 3 Fragen, 20 Sekunden pro Frage. Ihr wählt abwechselnd die Kategorie und spielt, wann ihr Zeit habt.
-- **⚡ Live-Battle**: 7 Fragen gleichzeitig, 15 Sekunden pro Frage. Eine richtige Antwort gibt 10 Punkte plus bis zu 10 Bonuspunkte für Tempo. Beide müssen online sein.
-- **📚 Lernen**: Schwächen üben, neue Fragen oder zufällige Fragen, optional mit Zeitlimit.
+- **🔁 Rundenduell**: 6 Runden à 3 Fragen, 20 Sekunden pro Frage. Ihr wählt abwechselnd die Kategorie.
+- **⚡ Live-Battle**: 7 Fragen gleichzeitig, 15 Sekunden pro Frage. Eine richtige Antwort gibt 10 Punkte plus bis zu 10 Tempo-Bonuspunkte.
+- **📚 Lernen**: Schwächen üben, neue Fragen oder zufällige Fragen.
 - **📊 Statistik**: Lernstand pro Kategorie. „Sicher“ heißt 3× hintereinander richtig.
 - **🏆 Rangliste**: Sieg = 3 Punkte, Unentschieden = 1 Punkt.
 
@@ -68,6 +60,7 @@ Rundenzahl, Zeitlimits usw. lassen sich oben in `app.js` im Block `E = { … }` 
 
 ## Gut zu wissen
 
-- **Anmeldung nur per Name:** Wer deinen Namen kennt, kann theoretisch als du spielen. Das ist bewusst so einfach gehalten, für eine Lerngruppe reicht das.
-- **Supabase Free-Tarif:** Wird ein Projekt 7 Tage lang nicht genutzt, pausiert Supabase es. Im Supabase-Dashboard lässt es sich mit einem Klick wieder starten.
-- **Lokal testen:** Im Ordner `python -m http.server 8765` ausführen und `http://localhost:8765` öffnen. Mit zwei Browser-Tabs kann man im Demo-Modus gegen sich selbst spielen.
+- Spieler melden sich nur mit Namen an. Für den Zugang zu den Fragen braucht man das Gruppen-Passwort.
+- Wer das Gruppen-Passwort hat, könnte mit Technikwissen nach und nach alle Fragen samt Lösungen abrufen.
+- Supabase Free pausiert ein Projekt nach 7 Tagen ohne Nutzung. Im Dashboard lässt es sich mit einem Klick fortsetzen.
+- Lokal testen: `python -m http.server 8765` ausführen und `http://localhost:8765` öffnen. Ohne Einträge in `config.js` läuft ein Demo-Modus mit der lokalen `fragen.json` (Passwort `demo`).

@@ -225,6 +225,7 @@ input[type="checkbox"] { width: 20px; height: 20px; }
 }
 .antwort:hover:not(:disabled) { border-color: var(--primaer); }
 .antwort:disabled { cursor: default; }
+.antwort.gewaehlt { border-color: var(--primaer); background: var(--akzent-bg); }
 .antwort.richtig { border-color: var(--ok); background: var(--ok-bg); }
 .antwort.falsch { border-color: var(--nok); background: var(--nok-bg); }
 
