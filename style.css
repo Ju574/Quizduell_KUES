@@ -373,3 +373,75 @@ textarea {
 .eingabe input:focus { outline: none; border-color: var(--primaer); }
 .eingabe input.richtig { border-color: var(--ok); background: var(--ok-bg); }
 .eingabe input.falsch { border-color: var(--nok); background: var(--nok-bg); }
+
+/* ---------- Gimmicks ---------- */
+/* VS-Intro */
+.vs-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at center, #1e3a8a 0%, #0b1220 70%);
+  color: #fff;
+  cursor: pointer;
+  animation: vs-einblenden 0.25s ease-out;
+  transition: opacity 0.3s;
+}
+.vs-intro.aus { opacity: 0; }
+.vs-buehne { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.vs-name {
+  font-size: clamp(1.8rem, 9vw, 3rem);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  max-width: 90vw;
+  overflow-wrap: anywhere;
+}
+.vs-name:nth-child(1) { animation: vs-von-links 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.vs-name:nth-child(3) { animation: vs-von-rechts 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) 0.25s both; }
+.vs-name:nth-child(5) { animation: vs-von-unten 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) 0.6s both; }
+.vs-wort {
+  font-size: clamp(1.4rem, 7vw, 2.2rem);
+  font-weight: 900;
+  font-style: italic;
+  color: #fbbf24;
+  text-shadow: 0 0 18px rgba(251, 191, 36, 0.8);
+  animation: vs-knall 0.45s cubic-bezier(0.2, 1.6, 0.4, 1) 0.4s both;
+}
+.vs-wort:nth-child(4) { animation-delay: 0.75s; }
+.vs-info { margin-top: 18px; font-size: 0.95rem; opacity: 0.85; animation: vs-einblenden 0.4s ease-out 0.9s both; }
+.vs-intro.ruhig *, .vs-intro.ruhig { animation: none !important; }
+
+@keyframes vs-einblenden { from { opacity: 0; } }
+@keyframes vs-von-links { from { transform: translateX(-120vw); } }
+@keyframes vs-von-rechts { from { transform: translateX(120vw); } }
+@keyframes vs-von-unten { from { transform: translateY(60vh); opacity: 0; } }
+@keyframes vs-knall { from { transform: scale(4); opacity: 0; } }
+
+/* Konfetti, Jubel, Wackeln */
+.konfetti { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 35; pointer-events: none; }
+.jubel { animation: jubel 0.7s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.wackeln { animation: wackeln 0.6s ease-in-out; }
+@keyframes jubel { 0% { transform: scale(0.6); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+@keyframes wackeln {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px) rotate(-1deg); }
+  40%, 80% { transform: translateX(8px) rotate(1deg); }
+}
+
+/* Serien-Flamme */
+.serie {
+  display: inline-block;
+  font-weight: 800;
+  color: #f97316;
+  animation: jubel 0.6s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.serie.gross { font-size: 1.2em; text-shadow: 0 0 14px rgba(249, 115, 22, 0.7); }
+.flamme { margin-left: 4px; font-size: 0.75em; font-weight: 800; color: #f97316; vertical-align: middle; }
+
+@media (prefers-reduced-motion: reduce) {
+  .jubel, .wackeln, .serie { animation: none; }
+}

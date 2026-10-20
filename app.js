@@ -281,7 +281,8 @@ function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
 
 // Zeigt eine Frage mit optionalem Zeitlimit. Die Lösung wird erst nach dem Antworten geladen.
 // beiAntwort(richtig) wird sofort aufgerufen (kann ein Promise liefern), weiter() nach Klick auf „Weiter“.
-function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
+// serieVorher: richtige Antworten in Folge vor dieser Frage (für die Serien-Flamme)
+function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVorher = 0 }) {
   ansicht = 'frage';
   const eingabe = frage.typ === 'eingabe';
   const optionen = eingabe ? [] : shuffle(frage.antworten);
@@ -323,6 +324,7 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
     const text = gewaehlt == null ? '⏱ Zeit abgelaufen' : richtig ? (pruefung && !pruefung.exakt ? '✓ Richtig! (kleiner Tippfehler)' : '✓ Richtig!') : '✗ Leider falsch';
     box.innerHTML = `
       <p class="meldung ${richtig ? 'ok' : 'nok'}">${text}</p>
+      ${richtig ? `<p class="mitte">${serieText(serieVorher + 1)}</p>` : ''}
       ${eingabe && loesung && !(pruefung && pruefung.exakt) ? `<p class="karte ok mehrzeilig">Richtige Antwort: ${esc(loesung.richtig)}</p>` : ''}
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       <button class="btn primaer" id="weiter">Weiter</button>
@@ -403,6 +405,111 @@ function meldenDialog(frageId) {
     }
   });
 }
+
+// ===== Effekte: VS-Intro, Konfetti, Serien-Flamme =====
+const wenigBewegung = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// true nur beim ersten Aufruf je Schlüssel (pro Gerät) – damit Effekte nicht bei jedem Öffnen kommen
+function erstesMal(schluessel) {
+  try {
+    if (localStorage.getItem(schluessel)) return false;
+    localStorage.setItem(schluessel, '1');
+  } catch {}
+  return true;
+}
+
+// „Anna VS Ben (VS Carla)“ – blendet sich nach ca. 2,4 s aus, Antippen überspringt
+function vsIntro(duell) {
+  if (!erstesMal('pruefi-intro-' + duell.id)) return Promise.resolve();
+  const namen = teilnehmer(duell).map((s) => `<div class="vs-name">${esc(nameVon(s))}</div>`);
+  const info = duell.modus === 'live' ? `⚡ Live-Battle · ${duell.daten.fragen.length} Fragen` : `🔁 Rundenduell · ${duell.daten.anzahl} Runden`;
+  const el = document.createElement('div');
+  el.className = 'vs-intro' + (wenigBewegung() ? ' ruhig' : '');
+  el.innerHTML = `<div class="vs-buehne">${namen.join('<div class="vs-wort">VS</div>')}<div class="vs-info">${info}</div></div>`;
+  document.body.appendChild(el);
+  return new Promise((fertig) => {
+    let weg = false;
+    const schliessen = () => {
+      if (weg) return;
+      weg = true;
+      el.classList.add('aus');
+      setTimeout(() => {
+        el.remove();
+        fertig();
+      }, 300);
+    };
+    el.addEventListener('click', schliessen);
+    setTimeout(schliessen, 2400);
+  });
+}
+
+function konfetti(dauer = 2500, anzahl = 160) {
+  if (wenigBewegung()) return;
+  const leinwand = document.createElement('canvas');
+  leinwand.className = 'konfetti';
+  document.body.appendChild(leinwand);
+  const ctx = leinwand.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  leinwand.width = innerWidth * dpr;
+  leinwand.height = innerHeight * dpr;
+  const farben = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#a855f7', '#eab308'];
+  const teile = Array.from({ length: anzahl }, () => ({
+    x: Math.random() * leinwand.width,
+    y: -Math.random() * leinwand.height * 0.6,
+    vx: (Math.random() - 0.5) * 4 * dpr,
+    vy: (2 + Math.random() * 4) * dpr,
+    w: (6 + Math.random() * 6) * dpr,
+    h: (8 + Math.random() * 8) * dpr,
+    r: Math.random() * Math.PI,
+    vr: (Math.random() - 0.5) * 0.3,
+    f: farben[Math.floor(Math.random() * farben.length)],
+  }));
+  const start = performance.now();
+  const schritt = (t) => {
+    const alter = t - start;
+    ctx.clearRect(0, 0, leinwand.width, leinwand.height);
+    ctx.globalAlpha = alter > dauer ? Math.max(0, 1 - (alter - dauer) / 600) : 1;
+    for (const p of teile) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.05 * dpr;
+      p.r += p.vr;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.r);
+      ctx.fillStyle = p.f;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (alter < dauer + 600) requestAnimationFrame(schritt);
+    else leinwand.remove();
+  };
+  requestAnimationFrame(schritt);
+}
+
+// Sieg: Konfetti + Jubel · Unentschieden: etwas Konfetti · Niederlage: Wackeln – einmal pro Duell
+function ergebnisEffekt(duell, element) {
+  if (!element || !erstesMal('pruefi-jubel-' + duell.id)) return;
+  const e = duellErgebnis(duell).ergebnis[ich.id];
+  if (e === 's') {
+    konfetti();
+    element.classList.add('jubel');
+  } else if (e === 'u') {
+    konfetti(1500, 60);
+    element.classList.add('jubel');
+  } else {
+    element.classList.add('wackeln');
+  }
+}
+
+// Anzahl richtiger Antworten in Folge am Ende einer Antwortliste (1/0 bzw. { r })
+const serieAusAntworten = (liste) => {
+  let n = 0;
+  for (let i = liste.length - 1; i >= 0 && liste[i] && (liste[i] === 1 || liste[i].r === 1); i--) n++;
+  return n;
+};
+const serieImRundenduell = (duell) => serieAusAntworten(duell.daten.runden.flatMap((r) => r.antworten[ich.id] || []));
+const serieText = (n) => (n >= 2 ? `<span class="serie ${n >= 5 ? 'gross' : ''}">🔥 ${n}er-Serie!</span>` : '');
 
 // ===== Routing =====
 const ROUTEN = [
@@ -873,6 +980,7 @@ function rundenUebersicht(duell) {
       <a class="btn" href="#/">Zur Startseite</a>
       ${duell.status === 'laeuft' ? '<button class="link gedaempft" id="aufgeben">Aufgeben</button>' : ''}
     </div>`);
+  if (duell.status === 'beendet') ergebnisEffekt(duell, app.querySelector('.meldung.gross'));
   on('#spielen', () => rundenZug(duell.id).catch(fehler));
   on('#revanche', () => revanche(duell).catch(fehler));
   on('#aufgeben', () => aufgeben(duell).catch(fehler));
@@ -884,6 +992,7 @@ async function rundenZug(id) {
   const duell = await DB.duellLaden(id);
   const d = duell.daten;
   if (duell.status !== 'laeuft' || d.amZug !== ich.id) return rundenUebersicht(duell);
+  if (!d.runden.some((r) => (r.antworten[ich.id] || []).length)) await vsIntro(duell);
   const offen = d.runden.findIndex((r) => !rundeFertig(r, ich.id));
   if (offen >= 0) return rundeSpielen(duell, offen);
   const letzte = d.runden[d.runden.length - 1];
@@ -948,6 +1057,7 @@ async function kategorieWaehlen(duell) {
 
 async function rundeSpielen(duell, idx) {
   const runde = duell.daten.runden[idx];
+  let serie = serieImRundenduell(duell);
   await fragenLaden(runde.fragen);
   // Jede Antwort wird sofort gespeichert – so kann eine Frage nicht durch Neuladen wiederholt werden
   const antwortSpeichern = (j, wert) =>
@@ -971,7 +1081,9 @@ async function rundeSpielen(duell, idx) {
       titel: `Runde ${idx + 1} · ${runde.kategorie}`,
       info: `Frage ${j + 1}/${runde.fragen.length}`,
       sekunden: sekundenVon(duell),
+      serieVorher: serie,
       beiAntwort: (richtig) => {
+        serie = richtig ? serie + 1 : 0;
         lernstandBuchen(frage.id, richtig);
         return antwortSpeichern(j, richtig ? 1 : 0);
       },
@@ -1094,15 +1206,20 @@ function liveTick(live) {
   }
 }
 
-function punkteKopf(duell, punkte) {
+function punkteKopf(duell, punkte, serien = {}) {
   return `
     <div class="karte punkte-kopf">
       ${reihenfolge(duell)
-        .map((s) => `<div class="${s === ich.id ? 'ich' : ''}"><div class="spieler-name">${esc(nameVon(s))}</div><div class="stand">${punkte[s]}</div></div>`)
+        .map((s) => `<div class="${s === ich.id ? 'ich' : ''}"><div class="spieler-name">${esc(nameVon(s))}</div><div class="stand">${punkte[s]}${serien[s] >= 2 ? `<span class="flamme" title="${serien[s]} richtig in Folge">🔥${serien[s]}</span>` : ''}</div></div>`)
         .join('')}
     </div>`;
 }
-const liveKopf = (duell) => punkteKopf(duell, duellErgebnis(duell).punkte);
+const liveKopf = (duell) =>
+  punkteKopf(
+    duell,
+    duellErgebnis(duell).punkte,
+    Object.fromEntries(teilnehmer(duell).map((s) => [s, serieAusAntworten((duell.daten.antworten[s] || []).filter(Boolean))]))
+  );
 
 function liveHinweis(text) {
   ansicht = 'live';
@@ -1185,6 +1302,7 @@ function livePause(live) {
     ${i > 0 ? '<div id="live-aufloesung"></div>' : '<p class="meldung gross">Gleich geht’s los!</p>'}
     <p class="countdown-text">Frage ${i + 1} von ${d.fragen.length} in <span id="countdown"></span> …</p>`);
   if (i > 0) liveAufloesungEinsetzen(live, i - 1);
+  else vsIntro(duell);
 }
 
 function liveAufloesung(duell, i, loesung) {
@@ -1258,7 +1376,8 @@ async function liveAntworten(live, frage, auswahl) {
     if (live.phase === phase) {
       if (eingabe) app.querySelector('#eingabe').classList.add(richtig ? 'richtig' : 'falsch');
       else markieren(live.optionen, auswahl, loesung && loesung.richtig);
-      app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span>` : '<span class="nok">✗ Leider falsch</span>';
+      const serie = richtig ? serieAusAntworten(d.antworten[ich.id].slice(0, i).filter(Boolean)) + 1 : 0;
+      app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span> ${serieText(serie)}` : '<span class="nok">✗ Leider falsch</span>';
     }
     lernstandBuchen(frage.id, richtig);
     live.uebernehmen(
@@ -1334,6 +1453,7 @@ function liveEnde(live) {
       <a class="btn" href="#/">Zur Startseite</a>
     </div>`);
   if (beantwortet) liveAufloesungEinsetzen(live, Math.min(d.index, d.fragen.length - 1));
+  ergebnisEffekt(duell, app.querySelector('.meldung.gross'));
   on('#revanche', () => revanche(duell).catch(fehler));
 }
 
@@ -1399,6 +1519,7 @@ function lernenAuswahl() {
 function lernrunde(fragen, mitZeit) {
   const falsche = [];
   let richtige = 0;
+  let serie = 0;
   const naechste = (i) => {
     if (i >= fragen.length) return lernEnde(fragen, richtige, falsche, mitZeit);
     const frage = fragen[i];
@@ -1407,7 +1528,9 @@ function lernrunde(fragen, mitZeit) {
       titel: `📚 ${frage.kategorie}`,
       info: `${i + 1}/${fragen.length}`,
       sekunden: mitZeit ? E.LERNEN_SEKUNDEN : 0,
+      serieVorher: serie,
       beiAntwort: (richtig) => {
+        serie = richtig ? serie + 1 : 0;
         if (richtig) richtige++;
         else falsche.push(frage);
         lernstandBuchen(frage.id, richtig);
