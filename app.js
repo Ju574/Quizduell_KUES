@@ -262,7 +262,8 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
     box.innerHTML = `
       <p class="meldung ${richtig ? 'ok' : 'nok'}">${gewaehlt == null ? '⏱ Zeit abgelaufen' : richtig ? '✓ Richtig!' : '✗ Leider falsch'}</p>
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
-      <button class="btn primaer" id="weiter">Weiter</button>`;
+      <button class="btn primaer" id="weiter">Weiter</button>
+      <p class="mitte">${meldenKnopf(frage.id)}</p>`;
     const knopf = box.querySelector('#weiter');
     knopf.addEventListener('click', async () => {
       knopf.disabled = true;
@@ -278,6 +279,53 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
   };
   app.querySelectorAll('.antwort').forEach((k, i) => k.addEventListener('click', () => aufloesen(i)));
   if (sekunden) timerStarten(app.querySelector('.timer-balken'), sekunden * 1000, () => aufloesen(null));
+}
+
+// ===== Frage melden =====
+// Knopf erscheint erst nach dem Antworten, damit er nichts über die Lösung verrät
+const MELDE_GRUENDE = ['Antwort ist falsch', 'Mehrere Antworten richtig', 'Frage unklar', 'Tippfehler', 'Sonstiges'];
+const meldenKnopf = (frageId) => `<button class="link klein melden" data-melden="${esc(frageId)}">⚑ Frage melden</button>`;
+
+document.addEventListener('click', (e) => {
+  const knopf = e.target.closest('[data-melden]');
+  if (knopf) meldenDialog(knopf.dataset.melden);
+});
+
+function meldenDialog(frageId) {
+  const frage = FRAGEN_TEXT.get(frageId);
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog-hintergrund';
+  dialog.innerHTML = `
+    <form class="dialog karte stapel">
+      <h3>Frage melden</h3>
+      ${frage ? `<p class="klein gedaempft">${esc(frage.frage)}</p>` : ''}
+      <div class="stapel" id="gruende">
+        ${MELDE_GRUENDE.map((g, i) => `<label class="check"><input type="radio" name="grund" value="${esc(g)}" ${i === 0 ? 'checked' : ''}> ${esc(g)}</label>`).join('')}
+      </div>
+      <textarea id="kommentar" maxlength="500" rows="3" placeholder="Was stimmt nicht? (optional)"></textarea>
+      <button class="btn primaer">Melden</button>
+      <button type="button" class="btn" id="abbrechen">Abbrechen</button>
+    </form>`;
+  document.body.appendChild(dialog);
+  const schliessen = () => dialog.remove();
+  dialog.querySelector('#abbrechen').onclick = schliessen;
+  dialog.addEventListener('click', (e) => e.target === dialog && schliessen());
+  dialog.querySelector('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const senden = dialog.querySelector('.btn.primaer');
+    senden.disabled = true;
+    try {
+      const grund = dialog.querySelector('input[name="grund"]:checked').value;
+      await DB.frageMelden(passwort, frageId, ich.id, grund, dialog.querySelector('#kommentar').value);
+      schliessen();
+      document.querySelectorAll(`[data-melden="${CSS.escape(frageId)}"]`).forEach((b) => {
+        b.replaceWith(Object.assign(document.createElement('span'), { className: 'klein gedaempft', textContent: '✓ Gemeldet – danke!' }));
+      });
+    } catch (err) {
+      senden.disabled = false;
+      fehler(err);
+    }
+  });
 }
 
 // ===== Routing =====
@@ -881,7 +929,8 @@ async function rundeErgebnis(id, idx) {
           return `<div class="aufloesung-zeile">
             <span class="punkt ${meine[j] ? 'ok' : 'nok'}"></span>
             <div><div>${esc(f ? f.frage : 'Frage nicht mehr vorhanden')}</div>
-            ${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}</div>
+            ${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}
+            ${f ? meldenKnopf(fid) : ''}</div>
           </div>`;
         })
         .join('')}
@@ -1079,6 +1128,7 @@ function liveAufloesung(duell, i, loesung) {
       ${loesung ? `<p class="ok">✓ ${esc(loesung.richtig)}</p>` : ''}
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       ${reihenfolge(duell).map(zeile).join('')}
+      ${frage ? `<p class="mitte">${meldenKnopf(frage.id)}</p>` : ''}
     </div>`;
 }
 
@@ -1297,7 +1347,7 @@ function lernEnde(fragen, richtige, falsche, mitZeit) {
     <div class="liste">${falsche
       .map((f) => {
         const l = LOESUNGEN.get(f.id);
-        return `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div>${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}${l && l.erklaerung ? `<div class="klein gedaempft">${esc(l.erklaerung)}</div>` : ''}</div></div>`;
+        return `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div>${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}${l && l.erklaerung ? `<div class="klein gedaempft">${esc(l.erklaerung)}</div>` : ''}${meldenKnopf(f.id)}</div></div>`;
       })
       .join('')}</div>` : ''}
     <div class="stapel">
@@ -1410,14 +1460,39 @@ async function rangliste(filter = 'alle') {
 async function adminAnsicht() {
   const adminPw = gespeichertSitzung('pruefi-admin');
   if (!adminPw) return adminLogin();
+  let meldungen;
+  try {
+    meldungen = await DB.adminMeldungen(adminPw);
+  } catch (e) {
+    // Admin-Passwort wurde geändert
+    try { sessionStorage.removeItem('pruefi-admin'); } catch {}
+    toast(e.message);
+    return adminLogin();
+  }
   const [spieler, duelle] = await Promise.all([ladeSpieler(), DB.alleDuelle()]);
   ansicht = 'admin';
+  const offen = meldungen.filter((m) => !m.erledigt);
   const anzahlDuelle = (id) => duelle.filter((d) => teilnehmer(d).includes(id)).length;
   const datum = (iso) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   const statusText = { offen: 'Einladung', laeuft: 'läuft', beendet: 'beendet', abgelehnt: 'abgesagt' };
 
+  const meldungZeile = (m) => `
+    <div class="admin-zeile meldung-zeile ${m.erledigt ? 'erledigt' : ''}">
+      <div class="admin-info">
+        <div class="klein gedaempft">${esc(m.kategorie || '')} · ${esc(m.frage_id)}</div>
+        <div><b>${esc(m.frage || 'Frage nicht gefunden')}</b></div>
+        ${m.richtig ? `<div class="klein ok">✓ ${esc(m.richtig)}</div>` : ''}
+        <div class="meldung-grund">⚑ ${esc(m.grund)}${m.kommentar ? ` – „${esc(m.kommentar)}“` : ''}</div>
+        <div class="klein gedaempft">${esc(nameVon(m.spieler))} · ${datum(m.erstellt)}${m.erledigt ? ' · erledigt' : ''}</div>
+      </div>
+      ${m.erledigt ? '' : `<button class="btn klein" data-erledigt="${m.id}">Erledigt</button>`}
+    </div>`;
+
   show(`
     <h2>Admin</h2>
+    <h3>Gemeldete Fragen (${offen.length} offen)</h3>
+    ${offen.length ? '<button class="btn" id="meldungen-kopieren">📋 Offene Meldungen für Claude kopieren</button>' : ''}
+    <div class="liste">${meldungen.map(meldungZeile).join('') || '<p class="leer">Keine Meldungen.</p>'}</div>
     <h3>Spieler (${spieler.length})</h3>
     <div class="liste">${spieler
       .map((s) => `
@@ -1463,6 +1538,36 @@ async function adminAnsicht() {
   });
   app.querySelectorAll('[data-duell]').forEach((b) => {
     b.onclick = () => ausfuehren('Dieses Duell endgültig löschen?', () => DB.adminDuellLoeschen(adminPw, b.dataset.duell));
+  });
+  app.querySelectorAll('[data-erledigt]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await DB.adminMeldungErledigen(adminPw, Number(b.dataset.erledigt));
+        adminAnsicht().catch(fehler);
+      } catch (e) {
+        fehler(e);
+      }
+    };
+  });
+  on('#meldungen-kopieren', async () => {
+    const text =
+      'Gemeldete Fragen aus dem Prüfi-Duell – bitte prüfen und korrigieren:\n\n' +
+      offen
+        .map((m) =>
+          [
+            `[${m.frage_id}] ${m.kategorie || ''}`,
+            `Frage: ${m.frage || '(nicht gefunden)'}`,
+            `Richtige Antwort laut Datenbank: ${m.richtig || '–'}`,
+            `Meldung: ${m.grund}${m.kommentar ? ` – ${m.kommentar}` : ''} (von ${nameVon(m.spieler)}, ${datum(m.erstellt)})`,
+          ].join('\n')
+        )
+        .join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Kopiert – einfach bei Claude einfügen.');
+    } catch {
+      prompt('Text kopieren:', text);
+    }
   });
   on('#admin-ende', () => {
     try { sessionStorage.removeItem('pruefi-admin'); } catch {}

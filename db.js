@@ -14,6 +14,7 @@
 //   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung }]       (max. 20)
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
 //   adminLernstandZuruecksetzen(pw, spielerId)
+//   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
 
 // Mit ?demo in der Adresse läuft immer der Demo-Modus (zum Testen, ohne die echte Datenbank anzufassen).
 const DB = (() => {
@@ -123,6 +124,15 @@ function supabaseBackend(cfg) {
     },
     async adminLernstandZuruecksetzen(pw, id) {
       pruefe(await sb.rpc('admin_lernstand_zuruecksetzen', { p_passwort: pw, p_spieler: id }));
+    },
+    async frageMelden(pw, frageId, spielerId, grund, kommentar) {
+      pruefe(await sb.rpc('frage_melden', { p_passwort: pw, p_frage_id: frageId, p_spieler: spielerId, p_grund: grund, p_kommentar: kommentar }));
+    },
+    async adminMeldungen(pw) {
+      return pruefe(await sb.rpc('admin_meldungen', { p_passwort: pw }));
+    },
+    async adminMeldungErledigen(pw, id) {
+      pruefe(await sb.rpc('admin_meldung_erledigen', { p_passwort: pw, p_id: id }));
     },
   };
 }
@@ -298,6 +308,30 @@ function demoBackend() {
       if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
       const db = lesen();
       db.lernstand = db.lernstand.filter((l) => l.spieler !== id);
+      schreiben(db);
+    },
+    async frageMelden(pw, frageId, spielerId, grund, kommentar) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      const db = lesen();
+      db.meldungen = db.meldungen || [];
+      db.meldungen.push({ id: Date.now(), frage_id: frageId, spieler: spielerId, grund, kommentar: kommentar || null, erstellt: jetzt(), erledigt: false });
+      schreiben(db);
+    },
+    async adminMeldungen(pw) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const fragen = await demoFragen('demo');
+      return kopie(lesen().meldungen || [])
+        .map((m) => {
+          const f = fragen.find((x) => x.id === m.frage_id) || {};
+          return { ...m, kategorie: f.kategorie, frage: f.frage, richtig: f.richtig };
+        })
+        .sort((a, b) => a.erledigt - b.erledigt || b.erstellt.localeCompare(a.erstellt));
+    },
+    async adminMeldungErledigen(pw, id) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      const m = (db.meldungen || []).find((x) => x.id === id);
+      if (m) m.erledigt = true;
       schreiben(db);
     },
   };

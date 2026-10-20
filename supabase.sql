@@ -188,6 +188,38 @@ begin
   return query select f.id, f.richtig, f.erklaerung from public.fragen f where f.id = any(p_ids);
 end $$;
 
+-- ===== Gemeldete Fragen =====
+-- Spieler können Fragen melden (nur mit Gruppen-Passwort); lesen kann sie nur der Admin.
+
+create table if not exists public.meldungen (
+  id bigint generated always as identity primary key,
+  frage_id text not null,
+  spieler text,
+  grund text not null check (char_length(grund) <= 60),
+  kommentar text check (char_length(kommentar) <= 500),
+  erstellt timestamptz not null default now(),
+  erledigt boolean not null default false
+);
+alter table public.meldungen enable row level security;
+revoke all on public.meldungen from anon, authenticated;
+
+create or replace function public.frage_melden(p_passwort text, p_frage_id text, p_spieler text, p_grund text, p_kommentar text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  insert into public.meldungen (frage_id, spieler, grund, kommentar)
+  values (p_frage_id, left(p_spieler, 40), left(p_grund, 60), nullif(left(trim(coalesce(p_kommentar, '')), 500), ''));
+end $$;
+
+revoke execute on function public.frage_melden(text, text, text, text, text) from public;
+grant execute on function public.frage_melden(text, text, text, text, text) to anon, authenticated;
+
 -- ===== Admin =====
 -- Eigenes Admin-Passwort (admin-passwort.sql). Nur damit lassen sich Spieler und Duelle löschen.
 
@@ -245,6 +277,43 @@ begin
   end if;
   delete from public.lernstand where spieler = p_spieler;
 end $$;
+
+create or replace function public.admin_meldungen(p_passwort text)
+returns table (id bigint, frage_id text, kategorie text, frage text, richtig text, spieler text, grund text, kommentar text, erstellt timestamptz, erledigt boolean)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  return query
+    select m.id, m.frage_id, f.kategorie, f.frage, f.richtig, m.spieler, m.grund, m.kommentar, m.erstellt, m.erledigt
+    from public.meldungen m
+    left join public.fragen f on f.id = m.frage_id
+    order by m.erledigt, m.erstellt desc;
+end $$;
+
+create or replace function public.admin_meldung_erledigen(p_passwort text, p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  update public.meldungen set erledigt = true where id = p_id;
+end $$;
+
+revoke execute on function public.admin_meldungen(text) from public;
+revoke execute on function public.admin_meldung_erledigen(text, bigint) from public;
+grant execute on function public.admin_meldungen(text) to anon, authenticated;
+grant execute on function public.admin_meldung_erledigen(text, bigint) to anon, authenticated;
 
 revoke execute on function public.admin_ok(text) from public;
 revoke execute on function public.admin_spieler_loeschen(text, text) from public;
