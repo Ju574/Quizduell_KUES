@@ -405,3 +405,41 @@ revoke execute on function public.fragen_importieren(text, jsonb) from public;
 revoke execute on function public.fragen_deaktivieren(text, text, text[]) from public;
 grant execute on function public.fragen_importieren(text, jsonb) to anon, authenticated;
 grant execute on function public.fragen_deaktivieren(text, text, text[]) to anon, authenticated;
+
+-- ===== Admin: Fragen durchsehen und zum Entfernen markieren =====
+alter table public.fragen add column if not exists zum_entfernen boolean not null default false;
+
+create or replace function public.admin_fragen(p_passwort text)
+returns table (id text, kategorie text, frage text, typ text, richtig text, falsch text[], alternativen text[], erklaerung text, zum_entfernen boolean)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  return query
+    select f.id, f.kategorie, f.frage, f.typ, f.richtig, f.falsch, f.alternativen, f.erklaerung, f.zum_entfernen
+    from public.fragen f where f.aktiv order by f.kategorie, f.id;
+end $$;
+
+create or replace function public.admin_frage_markieren(p_passwort text, p_id text, p_wert boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  update public.fragen set zum_entfernen = p_wert where id = p_id;
+end $$;
+
+revoke execute on function public.admin_fragen(text) from public;
+revoke execute on function public.admin_frage_markieren(text, text, boolean) from public;
+grant execute on function public.admin_fragen(text) to anon, authenticated;
+grant execute on function public.admin_frage_markieren(text, text, boolean) to anon, authenticated;

@@ -12,6 +12,7 @@
 //   oder "5": { "falsch": [...], "richtig": "…", "hinweis": "…" }   (richtig = Korrektur statt wörtlich)
 //   oder "7": { "eingabe": { "richtig": "Nageln", "alternativen": ["…"] } }  (Antwort eintippen;
 //         die wörtliche Kartenantwort wird dann nach dem Antworten als Erklärung gezeigt)
+//   oder "8": { "entfernt": true }   (Karte wird nicht als Frage übernommen)
 // sowie optional "_id" (ID-Kürzel) und "_kategorien" ({ "Kartenkategorie": "Spielkategorie" }).
 // Ohne vorhandene zusatz.json wird eine Vorlage mit allen Karten erzeugt.
 // Die Fragen dieses Kapitels werden in fragen.json ersetzt, andere Kapitel bleiben unverändert.
@@ -77,6 +78,7 @@ const korrigiert = [];
 const neu = karten.map((k, i) => {
   const { nummer, thema, id, seite } = merkmale(k, i);
   const eintrag = Array.isArray(zusatz[nummer]) ? { falsch: zusatz[nummer] } : zusatz[nummer] || {};
+  if (eintrag.entfernt) return null; // vom Admin zum Entfernen markiert
   const wörtlich = reinerText(k.a);
   const richtig = eintrag.richtig ? eintrag.richtig.trim() : wörtlich;
   if (eintrag.richtig) korrigiert.push(nummer);
@@ -90,7 +92,7 @@ const neu = karten.map((k, i) => {
   if (falsch.includes(richtig)) fehler.push(`${nummer}: falsche Antwort ist identisch mit der richtigen`);
   const erklaerung = [eintrag.hinweis, seite ? `Quelle: Skript ${seite}` : ''].filter(Boolean).join(' · ') || undefined;
   return { id, kategorie: `${praefix} · ${thema}`, frage: reinerText(k.q), richtig, falsch, ...(erklaerung ? { erklaerung } : {}) };
-});
+}).filter(Boolean);
 
 const ueberzaehlig = Object.keys(zusatz).filter((n) => !n.startsWith('_') && !karten.some((k, i) => merkmale(k, i).nummer === n));
 if (ueberzaehlig.length) fehler.push('Einträge ohne passende Karte: ' + ueberzaehlig.join(', '));

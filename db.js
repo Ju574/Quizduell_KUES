@@ -15,6 +15,7 @@
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
 //   adminLernstandZuruecksetzen(pw, spielerId)
 //   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
+//   adminFragen(pw) → alle Fragen inkl. Lösungen, adminFrageMarkieren(pw, id, wert)
 
 // Mit ?demo in der Adresse läuft immer der Demo-Modus (zum Testen, ohne die echte Datenbank anzufassen).
 const DB = (() => {
@@ -133,6 +134,10 @@ function supabaseBackend(cfg) {
     },
     async adminMeldungErledigen(pw, id) {
       pruefe(await sb.rpc('admin_meldung_erledigen', { p_passwort: pw, p_id: id }));
+    },
+    adminFragen: (pw) => alle(() => sb.rpc('admin_fragen', { p_passwort: pw })),
+    async adminFrageMarkieren(pw, id, wert) {
+      pruefe(await sb.rpc('admin_frage_markieren', { p_passwort: pw, p_id: id, p_wert: wert }));
     },
   };
 }
@@ -338,6 +343,17 @@ function demoBackend() {
       const db = lesen();
       const m = (db.meldungen || []).find((x) => x.id === id);
       if (m) m.erledigt = true;
+      schreiben(db);
+    },
+    async adminFragen(pw) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const markiert = lesen().markiert || [];
+      return kopie(await demoFragen('demo')).map((f) => ({ typ: 'auswahl', alternativen: [], ...f, zum_entfernen: markiert.includes(f.id) }));
+    },
+    async adminFrageMarkieren(pw, id, wert) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      db.markiert = (db.markiert || []).filter((x) => x !== id).concat(wert ? [id] : []);
       schreiben(db);
     },
   };

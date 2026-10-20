@@ -519,6 +519,7 @@ const ROUTEN = [
   [/^#\/statistik$/, () => statistik()],
   [/^#\/rangliste$/, () => rangliste()],
   [/^#\/admin$/, () => adminAnsicht()],
+  [/^#\/admin\/fragen$/, () => adminFragen()],
 ];
 
 async function route() {
@@ -1694,6 +1695,7 @@ async function adminAnsicht() {
 
   show(`
     <h2>Admin</h2>
+    <a class="btn primaer" href="#/admin/fragen">🗂 Alle Fragen durchsehen</a>
     <h3>Gemeldete Fragen (${offen.length} offen)</h3>
     ${offen.length ? '<button class="btn" id="meldungen-kopieren">📋 Offene Meldungen für Claude kopieren</button>' : ''}
     <div class="liste">${meldungen.map(meldungZeile).join('') || '<p class="leer">Keine Meldungen.</p>'}</div>
@@ -1777,6 +1779,105 @@ async function adminAnsicht() {
     try { sessionStorage.removeItem('pruefi-admin'); } catch {}
     gehe('#/');
   });
+}
+
+// Alle Fragen einzeln durchklicken und mit einem Klick zum Entfernen markieren.
+// Die Markierung landet in der Datenbank (fragen.zum_entfernen), Claude kann sie dort abrufen.
+async function adminFragen() {
+  const adminPw = gespeichertSitzung('pruefi-admin');
+  if (!adminPw) return gehe('#/admin');
+  let fragen;
+  try {
+    fragen = await DB.adminFragen(adminPw);
+  } catch (e) {
+    try { sessionStorage.removeItem('pruefi-admin'); } catch {}
+    toast(e.message);
+    return gehe('#/admin');
+  }
+  ansicht = 'admin-fragen';
+  const kategorien = [...new Set(fragen.map((f) => f.kategorie))];
+  const zustand = {
+    kategorie: gespeichertSitzung('pruefi-admin-kategorie') || '',
+    nurMarkiert: false,
+    pos: Number(gespeichertSitzung('pruefi-admin-position')) || 0,
+  };
+  const auswahl = () =>
+    fragen.filter((f) => (!zustand.kategorie || f.kategorie === zustand.kategorie) && (!zustand.nurMarkiert || f.zum_entfernen));
+
+  const zeichnen = () => {
+    const liste = auswahl();
+    zustand.pos = Math.min(Math.max(0, zustand.pos), Math.max(0, liste.length - 1));
+    try {
+      sessionStorage.setItem('pruefi-admin-kategorie', zustand.kategorie);
+      sessionStorage.setItem('pruefi-admin-position', zustand.pos);
+    } catch {}
+    const f = liste[zustand.pos];
+    const markiert = fragen.filter((x) => x.zum_entfernen);
+    const antworten = !f
+      ? ''
+      : f.typ === 'eingabe'
+        ? (f.alternativen || []).length ? `<div class="klein gedaempft">Auch richtig: ${f.alternativen.map(esc).join(' · ')}</div>` : ''
+        : (f.falsch || []).map((x) => `<div class="admin-falsch mehrzeilig">✗ ${esc(x)}</div>`).join('');
+    show(`
+      <div class="frage-kopf"><a class="link" href="#/admin">← Admin</a><span>${markiert.length} zum Entfernen markiert</span></div>
+      <div class="admin-filter">
+        <select id="kategorie">
+          <option value="">Alle Kategorien (${fragen.length})</option>
+          ${kategorien.map((k) => `<option ${k === zustand.kategorie ? 'selected' : ''}>${esc(k)}</option>`).join('')}
+        </select>
+        <label class="check"><input type="checkbox" id="nur-markierte" ${zustand.nurMarkiert ? 'checked' : ''}> nur markierte</label>
+      </div>
+      ${f ? `
+        <div class="karte admin-frage ${f.zum_entfernen ? 'markiert' : ''}">
+          <div class="klein gedaempft">${zustand.pos + 1} / ${liste.length} · ${esc(f.kategorie)} · ${esc(f.id)}${f.typ === 'eingabe' ? ' · ✎ eintippen' : ''}</div>
+          <p class="admin-frage-text">${esc(f.frage)}</p>
+          <div class="ok mehrzeilig">✓ ${esc(f.richtig)}</div>
+          ${antworten}
+          ${f.erklaerung ? `<p class="erklaerung">${esc(f.erklaerung)}</p>` : ''}
+        </div>
+        <div class="admin-navigation">
+          <button class="btn" id="zurueck" ${zustand.pos === 0 ? 'disabled' : ''} aria-label="Vorherige Frage">←</button>
+          <button class="btn ${f.zum_entfernen ? 'gefahr-voll' : 'gefahr'}" id="markieren">${f.zum_entfernen ? '✓ Markiert – nochmal tippen zum Aufheben' : '🗑 Zum Entfernen markieren'}</button>
+          <button class="btn" id="vor" ${zustand.pos >= liste.length - 1 ? 'disabled' : ''} aria-label="Nächste Frage">→</button>
+        </div>` : '<p class="leer">Keine Fragen in dieser Auswahl.</p>'}
+      ${markiert.length ? `<button class="btn" id="kopieren">📋 Markierte für Claude kopieren (${markiert.length})</button>` : ''}
+      <p class="klein gedaempft mitte">Tipp: Am PC geht's auch mit den Pfeiltasten ← →.</p>`);
+
+    on('#kategorie', (e) => { zustand.kategorie = e.target.value; zustand.pos = 0; zeichnen(); }, 'change');
+    on('#nur-markierte', (e) => { zustand.nurMarkiert = e.target.checked; zustand.pos = 0; zeichnen(); }, 'change');
+    on('#zurueck', () => { zustand.pos--; zeichnen(); });
+    on('#vor', () => { zustand.pos++; zeichnen(); });
+    on('#markieren', async () => {
+      const neu = !f.zum_entfernen;
+      f.zum_entfernen = neu;
+      zeichnen();
+      try {
+        await DB.adminFrageMarkieren(adminPw, f.id, neu);
+      } catch (e) {
+        f.zum_entfernen = !neu;
+        zeichnen();
+        fehler(e);
+      }
+    });
+    on('#kopieren', async () => {
+      const text = `Zum Entfernen markierte Fragen (${markiert.length}):\n` + markiert.map((x) => `- [${x.id}] ${x.kategorie}: ${x.frage}`).join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Kopiert – oder sag Claude einfach Bescheid, die Markierungen stehen auch in der Datenbank.');
+      } catch {
+        prompt('Text kopieren:', text);
+      }
+    });
+  };
+
+  const tasten = (e) => {
+    if (ansicht !== 'admin-fragen' || (e.target.matches && e.target.matches('input, select, textarea'))) return;
+    if (e.key === 'ArrowRight') app.querySelector('#vor')?.click();
+    if (e.key === 'ArrowLeft') app.querySelector('#zurueck')?.click();
+  };
+  document.addEventListener('keydown', tasten);
+  beimVerlassen(() => document.removeEventListener('keydown', tasten));
+  zeichnen();
 }
 
 function adminLogin() {

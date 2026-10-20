@@ -445,3 +445,13 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .jubel, .wackeln, .serie { animation: none; }
 }
+
+/* Admin: Fragen durchsehen */
+.admin-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.admin-filter select { flex: 1 1 220px; width: auto; }
+.admin-frage.markiert { border-color: var(--nok); background: var(--nok-bg); }
+.admin-frage-text { font-weight: 600; font-size: 1.05rem; }
+.admin-frage .ok { margin: 8px 0 4px; font-weight: 600; }
+.admin-falsch { color: var(--gedaempft); margin: 4px 0; }
+.admin-navigation { display: grid; grid-template-columns: 56px 1fr 56px; gap: 8px; margin-bottom: 12px; }
+.btn.gefahr-voll { background: var(--nok); border-color: var(--nok); color: #fff; }
