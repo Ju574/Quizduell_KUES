@@ -929,7 +929,7 @@ async function rundeErgebnis(id, idx) {
           return `<div class="aufloesung-zeile">
             <span class="punkt ${meine[j] ? 'ok' : 'nok'}"></span>
             <div><div>${esc(f ? f.frage : 'Frage nicht mehr vorhanden')}</div>
-            ${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}
+            ${l ? `<div class="klein ok mehrzeilig">✓ ${esc(l.richtig)}</div>` : ''}
             ${f ? meldenKnopf(fid) : ''}</div>
           </div>`;
         })
@@ -1125,7 +1125,7 @@ function liveAufloesung(duell, i, loesung) {
     <div class="karte">
       <p class="klein gedaempft">Frage ${i + 1}</p>
       <p>${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</p>
-      ${loesung ? `<p class="ok">✓ ${esc(loesung.richtig)}</p>` : ''}
+      ${loesung ? `<p class="ok mehrzeilig">✓ ${esc(loesung.richtig)}</p>` : ''}
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       ${reihenfolge(duell).map(zeile).join('')}
       ${frage ? `<p class="mitte">${meldenKnopf(frage.id)}</p>` : ''}
@@ -1347,7 +1347,7 @@ function lernEnde(fragen, richtige, falsche, mitZeit) {
     <div class="liste">${falsche
       .map((f) => {
         const l = LOESUNGEN.get(f.id);
-        return `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div>${l ? `<div class="klein ok">✓ ${esc(l.richtig)}</div>` : ''}${l && l.erklaerung ? `<div class="klein gedaempft">${esc(l.erklaerung)}</div>` : ''}${meldenKnopf(f.id)}</div></div>`;
+        return `<div class="aufloesung-zeile"><span class="punkt nok"></span><div><div>${esc(f.frage)}</div>${l ? `<div class="klein ok mehrzeilig">✓ ${esc(l.richtig)}</div>` : ''}${l && l.erklaerung ? `<div class="klein gedaempft">${esc(l.erklaerung)}</div>` : ''}${meldenKnopf(f.id)}</div></div>`;
       })
       .join('')}</div>` : ''}
     <div class="stapel">
@@ -1481,7 +1481,7 @@ async function adminAnsicht() {
       <div class="admin-info">
         <div class="klein gedaempft">${esc(m.kategorie || '')} · ${esc(m.frage_id)}</div>
         <div><b>${esc(m.frage || 'Frage nicht gefunden')}</b></div>
-        ${m.richtig ? `<div class="klein ok">✓ ${esc(m.richtig)}</div>` : ''}
+        ${m.richtig ? `<div class="klein ok mehrzeilig">✓ ${esc(m.richtig)}</div>` : ''}
         <div class="meldung-grund">⚑ ${esc(m.grund)}${m.kommentar ? ` – „${esc(m.kommentar)}“` : ''}</div>
         <div class="klein gedaempft">${esc(nameVon(m.spieler))} · ${datum(m.erstellt)}${m.erledigt ? ' · erledigt' : ''}</div>
       </div>

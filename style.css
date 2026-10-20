@@ -363,3 +363,6 @@ textarea {
   z-index: 20;
 }
 .toast[hidden] { display: none; }
+
+/* Antworten mit Aufzählungen (Zeilenumbrüche aus den Karteikarten) */
+.antwort, .mehrzeilig { white-space: pre-line; }
