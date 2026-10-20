@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prüfi-Duell</title>
+  <meta name="description" content="Quizduell für die Kfz-Prüfingenieur-Ausbildung">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="topbar-titel">🔧 Prüfi-Duell</a>
+    <div class="topbar-rechts" id="topbar-rechts"></div>
+  </header>
+  <div id="demo-hinweis" class="demo-hinweis" hidden>
+    Demo-Modus: Daten werden nur in diesem Browser gespeichert. Für echte Duelle Supabase in <code>config.js</code> eintragen.
+  </div>
+  <main id="app"></main>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="fragen.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
