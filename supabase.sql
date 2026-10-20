@@ -120,6 +120,8 @@ alter table public.fragen add column if not exists alternativen text[] not null 
 -- Optionale Skizzen: Verweis auf public.bilder; "bild" steht über der Frage, "bild_nach" erscheint erst in der Auflösung
 alter table public.fragen add column if not exists bild text;
 alter table public.fragen add column if not exists bild_nach text;
+-- Rechenaufgaben lassen sich beim Duell ausschließen
+alter table public.fragen add column if not exists rechnung boolean not null default false;
 
 create table if not exists public.bilder (
   id text primary key,
@@ -149,9 +151,10 @@ as $$
   );
 $$;
 
--- Liste aller Fragen-IDs mit Kategorie (ohne Texte)
-create or replace function public.fragen_katalog(p_passwort text)
-returns table (id text, kategorie text)
+-- Liste aller Fragen-IDs mit Kategorie und Rechenaufgaben-Kennzeichen (ohne Texte)
+drop function if exists public.fragen_katalog(text);
+create function public.fragen_katalog(p_passwort text)
+returns table (id text, kategorie text, rechnung boolean)
 language plpgsql
 stable
 security definer
@@ -162,7 +165,7 @@ begin
   if not public.passwort_ok(p_passwort) then
     raise exception 'Falsches Gruppen-Passwort';
   end if;
-  return query select f.id, f.kategorie from public.fragen f where f.aktiv order by f.kategorie, f.id;
+  return query select f.id, f.kategorie, f.rechnung from public.fragen f where f.aktiv order by f.kategorie, f.id;
 end $$;
 
 -- Fragetexte mit gemischten Antworten – OHNE Hinweis, welche richtig ist
@@ -383,16 +386,16 @@ begin
   if jsonb_array_length(p_fragen) > 100 then
     raise exception 'Höchstens 100 Fragen pro Aufruf';
   end if;
-  insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach)
+  insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach, rechnung)
   select f.id, f.kategorie, f.frage, f.richtig,
          coalesce(f.falsch, '{}'), nullif(f.erklaerung, ''), coalesce(f.typ, 'auswahl'), coalesce(f.alternativen, '{}'),
-         nullif(f.bild, ''), nullif(f.bild_nach, '')
+         nullif(f.bild, ''), nullif(f.bild_nach, ''), coalesce(f.rechnung, false)
   from jsonb_to_recordset(p_fragen) as f(id text, kategorie text, frage text, richtig text, falsch text[], erklaerung text,
-                                          typ text, alternativen text[], bild text, bild_nach text)
+                                          typ text, alternativen text[], bild text, bild_nach text, rechnung boolean)
   on conflict (id) do update set
     kategorie = excluded.kategorie, frage = excluded.frage, richtig = excluded.richtig, falsch = excluded.falsch,
     erklaerung = excluded.erklaerung, typ = excluded.typ, alternativen = excluded.alternativen,
-    bild = excluded.bild, bild_nach = excluded.bild_nach,
+    bild = excluded.bild, bild_nach = excluded.bild_nach, rechnung = excluded.rechnung,
     aktiv = true, geaendert = now();
   get diagnostics anzahl = row_count;
   return anzahl;

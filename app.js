@@ -863,6 +863,82 @@ async function startseite() {
     <p class="mitte fusszeile"><a class="link gedaempft klein" href="#/admin">Admin</a></p>`);
 }
 
+// ===== Themen-Auswahl (Kategorien und Rechenaufgaben ausschließen) =====
+// themen = { ohne: [Kategorien], ohneRechnung } – wird im Duell gespeichert und auf diesem Gerät gemerkt
+const THEMEN_SCHLUESSEL = 'pruefi-themen';
+const themaVon = (kategorie) => kategorie.split(' · ')[0];
+const THEMEN = () => [...new Set(KATEGORIEN.map(themaVon))];
+
+function gemerkteThemen() {
+  try {
+    const t = JSON.parse(localStorage.getItem(THEMEN_SCHLUESSEL)) || {};
+    return { ohne: (t.ohne || []).filter((k) => KATEGORIEN.includes(k)), ohneRechnung: !!t.ohneRechnung };
+  } catch {
+    return { ohne: [], ohneRechnung: false };
+  }
+}
+
+// Filter für FRAGEN_LISTE; ohne Angabe (ältere Duelle) passt alles
+const imThema = (themen) => (f) =>
+  !themen || !((themen.ohne || []).includes(f.kategorie) || (themen.ohneRechnung && f.rechnung));
+
+// „Alle Themen“, „Abgas, Fahrwerk“, „Fahrwerk · Reifen“ oder „5 von 34 Kategorien“ (+ „ohne Rechnungen“)
+function themenText(themen) {
+  const ohne = themen.ohne || [];
+  const drin = KATEGORIEN.filter((k) => !ohne.includes(k));
+  let text;
+  if (!ohne.length) text = 'Alle Themen';
+  else if (drin.length === 1) text = drin[0];
+  else {
+    const gruppen = [...new Set(drin.map(themaVon))];
+    const ganz = gruppen.every((g) => KATEGORIEN.filter((k) => themaVon(k) === g).every((k) => drin.includes(k)));
+    text = ganz ? gruppen.join(', ') : `${drin.length} von ${KATEGORIEN.length} Kategorien`;
+  }
+  return themen.ohneRechnung ? `${text} · ohne Rechnungen` : text;
+}
+
+const themenFeld = () => `
+  <details class="themen" id="themen">
+    <summary><span class="feld-titel">Themen</span><span id="themen-info" class="klein gedaempft"></span></summary>
+    <label class="check rechnung"><input type="checkbox" id="ohne-rechnung"> 🧮 Rechenaufgaben ausschließen</label>
+    ${THEMEN().map((g) => `
+      <div class="themen-gruppe">
+        <label class="check gruppe"><input type="checkbox" data-gruppe="${esc(g)}"> ${esc(g)}</label>
+        <div class="themen-unter">${KATEGORIEN.filter((k) => themaVon(k) === g)
+          .map((k) => `<label class="check"><input type="checkbox" data-kat="${esc(k)}"> ${esc(k.split(' · ').slice(1).join(' · ') || k)}</label>`)
+          .join('')}</div>
+      </div>`).join('')}
+  </details>`;
+
+// Häkchen = Thema ist dabei. Ändert themen direkt und merkt sich die Auswahl auf diesem Gerät.
+function themenAktivieren(themen) {
+  const box = app.querySelector('#themen');
+  const zeichnen = () => {
+    box.querySelectorAll('[data-kat]').forEach((c) => (c.checked = !themen.ohne.includes(c.dataset.kat)));
+    box.querySelectorAll('[data-gruppe]').forEach((c) => {
+      const kategorien = KATEGORIEN.filter((k) => themaVon(k) === c.dataset.gruppe);
+      const aus = kategorien.filter((k) => themen.ohne.includes(k)).length;
+      c.checked = aus === 0;
+      c.indeterminate = aus > 0 && aus < kategorien.length;
+    });
+    box.querySelector('#ohne-rechnung').checked = themen.ohneRechnung;
+    const anzahl = FRAGEN_LISTE.filter(imThema(themen)).length;
+    box.querySelector('#themen-info').textContent = `${themenText(themen)} · ${anzahl} Fragen`;
+  };
+  box.addEventListener('change', (e) => {
+    const c = e.target;
+    const setzen = (kategorien, dabei) => {
+      themen.ohne = dabei ? themen.ohne.filter((k) => !kategorien.includes(k)) : [...new Set([...themen.ohne, ...kategorien])];
+    };
+    if (c.dataset.kat) setzen([c.dataset.kat], c.checked);
+    else if (c.dataset.gruppe) setzen(KATEGORIEN.filter((k) => themaVon(k) === c.dataset.gruppe), c.checked);
+    else if (c.id === 'ohne-rechnung') themen.ohneRechnung = c.checked;
+    try { localStorage.setItem(THEMEN_SCHLUESSEL, JSON.stringify(themen)); } catch {}
+    zeichnen();
+  });
+  zeichnen();
+}
+
 // ===== Neues Duell =====
 async function neuesDuell() {
   const spieler = (await ladeSpieler()).filter((s) => s.id !== ich.id);
@@ -873,7 +949,7 @@ async function neuesDuell() {
     runden: E.RUNDEN_STANDARD,
     liveFragen: E.LIVE_FRAGEN_STANDARD,
     sekunden: E.TIMER_STANDARD,
-    kategorie: '',
+    themen: gemerkteThemen(),
   };
 
   show(`
@@ -892,12 +968,7 @@ async function neuesDuell() {
         <span class="feld-titel">Zeit pro Frage</span>
         <div class="segment" id="timer">${E.TIMER_AUSWAHL.map((s) => `<button data-wert="${s ?? ''}">${timerText(s)}</button>`).join('')}</div>
       </div>
-      <label id="kategorie-feld" hidden>Kategorie
-        <select id="kategorie">
-          <option value="">Alle Kategorien</option>
-          ${KATEGORIEN.map((k) => `<option>${esc(k)}</option>`).join('')}
-        </select>
-      </label>
+      ${themenFeld()}
     </div>
     <h3>Gegner wählen <span class="klein">(1 oder ${E.MAX_GEGNER})</span></h3>
     <input id="suche" placeholder="Name suchen …" autocomplete="off">
@@ -926,14 +997,13 @@ async function neuesDuell() {
     });
     segmentAktiv('#anzahl', aktuell);
     segmentAktiv('#timer', wahl.sekunden);
-    app.querySelector('#kategorie-feld').hidden = !live;
   };
   app.querySelectorAll('#modus button').forEach((b) => (b.onclick = () => { wahl.modus = b.dataset.wert; zeichnenEinstellungen(); }));
   app.querySelectorAll('#timer button').forEach((b) => (b.onclick = () => {
     wahl.sekunden = b.dataset.wert ? Number(b.dataset.wert) : null;
     segmentAktiv('#timer', b.dataset.wert);
   }));
-  on('#kategorie', (e) => (wahl.kategorie = e.target.value), 'change');
+  themenAktivieren(wahl.themen);
   zeichnenEinstellungen();
 
   const startKnopf = app.querySelector('#starten');
@@ -979,9 +1049,12 @@ async function neuesDuell() {
   };
 }
 
-// wahl: { modus, gegner: [ids], runden, liveFragen, sekunden, kategorie }
+// wahl: { modus, gegner: [ids], runden, liveFragen, sekunden, themen: { ohne, ohneRechnung } }
 async function duellStarten(wahl) {
   if (!FRAGEN_LISTE.length) return toast('Es sind noch keine Fragen in der Datenbank.');
+  const themen = { ohne: wahl.themen.ohne.filter((k) => KATEGORIEN.includes(k)), ohneRechnung: !!wahl.themen.ohneRechnung };
+  const pool = FRAGEN_LISTE.filter(imThema(themen));
+  if (pool.length < (wahl.modus === 'runden' ? E.FRAGEN_PRO_RUNDE : 1)) return toast('Zu wenige Fragen in dieser Themen-Auswahl.');
   const [g1, g2] = wahl.gegner;
   const basis = { modus: wahl.modus, spieler1: ich.id, spieler2: g1, ...(g2 ? { spieler3: g2 } : {}) };
   const alle = [ich.id, ...wahl.gegner];
@@ -990,15 +1063,15 @@ async function duellStarten(wahl) {
     duell = await DB.duellAnlegen({
       ...basis,
       status: 'laeuft',
-      daten: { anzahl: wahl.runden, sekunden: wahl.sekunden, amZug: ich.id, runden: [] },
+      daten: { anzahl: wahl.runden, sekunden: wahl.sekunden, amZug: ich.id, runden: [], ...themen },
     });
   } else {
-    const pool = wahl.kategorie ? FRAGEN_LISTE.filter((f) => f.kategorie === wahl.kategorie) : FRAGEN_LISTE;
     duell = await DB.duellAnlegen({
       ...basis,
       status: 'offen',
       daten: {
-        kategorie: wahl.kategorie || 'Alle Kategorien',
+        kategorie: themenText(themen),
+        ...themen,
         fragen: shuffle(pool).slice(0, wahl.liveFragen).map((f) => f.id),
         sekunden: wahl.sekunden,
         index: 0,
@@ -1014,13 +1087,18 @@ async function duellStarten(wahl) {
 // Revanche mit denselben Gegnern und Einstellungen
 function revanche(duell) {
   const d = duell.daten;
+  // Ältere Live-Duelle hatten statt der Themen-Auswahl eine einzelne Kategorie
+  const alteKategorie = !d.ohne && KATEGORIEN.includes(d.kategorie) ? d.kategorie : null;
   return duellStarten({
     modus: duell.modus,
     gegner: gegnerVon(duell),
     runden: d.anzahl || E.RUNDEN_STANDARD,
     liveFragen: d.fragen ? d.fragen.length : E.LIVE_FRAGEN_STANDARD,
     sekunden: sekundenVon(duell),
-    kategorie: d.kategorie && d.kategorie !== 'Alle Kategorien' ? d.kategorie : '',
+    themen: {
+      ohne: alteKategorie ? KATEGORIEN.filter((k) => k !== alteKategorie) : d.ohne || [],
+      ohneRechnung: !!d.ohneRechnung,
+    },
   });
 }
 
@@ -1107,6 +1185,7 @@ function rundenUebersicht(duell) {
   }
   show(`
     <div class="frage-kopf"><span>🔁 Rundenduell · ${d.anzahl} Runden · ${timerText(sekundenVon(duell))}</span><span>gegen ${esc(gegnerNamen(duell))}</span></div>
+    ${d.ohne && (d.ohne.length || d.ohneRechnung) ? `<p class="klein gedaempft mitte">Themen: ${esc(themenText(d))}</p>` : ''}
     ${rundenSpielstand(duell)}
     <div class="stapel">
       ${aktion}
@@ -1147,7 +1226,7 @@ async function zugBeenden(id) {
 async function kategorieWaehlen(duell) {
   const d = duell.daten;
   const benutzt = new Set(d.runden.flatMap((r) => r.fragen));
-  const frei = FRAGEN_LISTE.filter((f) => !benutzt.has(f.id));
+  const frei = FRAGEN_LISTE.filter((f) => !benutzt.has(f.id) && imThema(d)(f));
   const n = E.FRAGEN_PRO_RUNDE;
   let auswahl = shuffle(KATEGORIEN.filter((k) => frei.filter((f) => f.kategorie === k).length >= n)).slice(0, E.KATEGORIEN_ZUR_AUSWAHL);
   if (!auswahl.length) {

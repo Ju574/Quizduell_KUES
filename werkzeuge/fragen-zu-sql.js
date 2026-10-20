@@ -46,13 +46,13 @@ const text = (s) => (s == null || s === '' ? 'null' : `'${String(s).replace(/'/g
 const liste = (a) => `array[${a.map(text).join(', ')}]::text[]`;
 
 const zeilen = fragen.map(
-  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch || [])}, ${text(f.erklaerung)}, ${text(f.typ || 'auswahl')}, ${liste(f.alternativen || [])}, ${text(f.bild)}, ${text(f.bild_nach)})`
+  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch || [])}, ${text(f.erklaerung)}, ${text(f.typ || 'auswahl')}, ${liste(f.alternativen || [])}, ${text(f.bild)}, ${text(f.bild_nach)}, ${f.rechnung ? 'true' : 'false'})`
 );
 
 const sql = `-- Automatisch erzeugt aus ${quelle} am ${new Date().toISOString().slice(0, 16).replace('T', ' ')}
 -- ${fragen.length} Fragen. In Supabase → SQL Editor einfügen und ausführen.
 
-insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach) values
+insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach, rechnung) values
 ${zeilen.join(',\n')}
 on conflict (id) do update set
   kategorie = excluded.kategorie,
@@ -64,6 +64,7 @@ on conflict (id) do update set
   alternativen = excluded.alternativen,
   bild = excluded.bild,
   bild_nach = excluded.bild_nach,
+  rechnung = excluded.rechnung,
   aktiv = true,
   geaendert = now();
 

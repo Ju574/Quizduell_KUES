@@ -47,9 +47,9 @@ const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'i
 
   let importiert = 0;
   for (let i = 0; i < fragen.length; i += 50) {
-    const paket = fragen.slice(i, i + 50).map(({ id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach }) => ({
+    const paket = fragen.slice(i, i + 50).map(({ id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach, rechnung }) => ({
       id, kategorie, frage, richtig, falsch: falsch || [], erklaerung: erklaerung || null, typ: typ || 'auswahl', alternativen: alternativen || [],
-      bild: bild || null, bild_nach: bild_nach || null,
+      bild: bild || null, bild_nach: bild_nach || null, rechnung: !!rechnung,
     }));
     importiert += await rpc('fragen_importieren', { p_schluessel: schluessel, p_fragen: paket });
   }

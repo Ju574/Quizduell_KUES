@@ -9,7 +9,7 @@
 //   duelleVon(spielerId), beendeteDuelle()
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
-//   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie }]
+//   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie, rechnung }]
 //   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten, bild }]   (max. 20, ohne Lösung)
 //   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen, bild_nach }]   (max. 20)
 //   bildHolen(pw, bildId) → Adresse für <img src> (Gruppen- oder Admin-Passwort)
@@ -258,7 +258,7 @@ function demoBackend() {
       return pw === 'demo';
     },
     async fragenKatalog(pw) {
-      return (await demoFragen(pw)).map(({ id, kategorie }) => ({ id, kategorie }));
+      return (await demoFragen(pw)).map(({ id, kategorie, rechnung }) => ({ id, kategorie, rechnung: !!rechnung }));
     },
     async fragenHolen(pw, ids) {
       return (await demoFragen(pw))

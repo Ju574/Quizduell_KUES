@@ -132,6 +132,18 @@ main { max-width: 560px; margin: 0 auto; padding: 16px 16px 48px; }
 
 label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; font-size: 0.9rem; }
 label.check { flex-direction: row; align-items: center; gap: 10px; font-weight: 400; font-size: 1rem; cursor: pointer; }
+
+/* Themen-Auswahl beim neuen Duell (aufklappbar) */
+.themen summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; list-style: none; }
+.themen summary::-webkit-details-marker { display: none; }
+.themen summary::after { content: '▾'; margin-left: auto; color: var(--gedaempft); }
+.themen[open] summary::after { content: '▴'; }
+.themen[open] summary { margin-bottom: 10px; }
+.themen .rechnung { padding: 8px 0 10px; border-bottom: 1px solid var(--rand); margin-bottom: 6px; }
+.themen-gruppe { padding: 6px 0; }
+.themen-gruppe .gruppe { font-weight: 700; }
+.themen-unter { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; padding: 4px 0 0 28px; }
+.themen-unter label.check { font-size: 0.92rem; }
 input, select {
   width: 100%;
   padding: 12px;
