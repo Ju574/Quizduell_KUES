@@ -1441,9 +1441,62 @@ function livePause(live) {
   show(`
     ${liveKopf(duell)}
     ${i > 0 ? '<div id="live-aufloesung"></div>' : '<p class="meldung gross">Gleich geht’s los!</p>'}
+    ${i > 0 ? `<p class="spruch">${esc(liveSpruch(duell, i))}</p>` : ''}
     <p class="countdown-text">Frage ${i + 1} von ${d.fragen.length} in <span id="countdown"></span> …</p>`);
   if (i > 0) liveAufloesungEinsetzen(live, i - 1);
   else vsIntro(duell);
+}
+
+// Spruch in der Pause vor Frage i, passend zur Lage nach Frage i − 1.
+// Die Auswahl hängt nur von Duell-ID und Fragennummer ab – alle Spieler sehen denselben Spruch.
+function liveSpruch(duell, i) {
+  const d = duell.daten;
+  const spieler = teilnehmer(duell);
+  const stand = (k) => Object.fromEntries(spieler.map((s) => [s, summe(d.antworten[s].slice(0, k).map((a) => a && a.p))]));
+  const jetzt = stand(i);
+  const vorher = stand(i - 1);
+  const rang = [...spieler].sort((a, b) => jetzt[b] - jetzt[a]);
+  const [erster, zweiter] = rang;
+  const letzter = rang[rang.length - 1];
+  const fuehrend = (p) => spieler.filter((s) => p[s] === Math.max(...spieler.map((x) => p[x])));
+  const antworten = spieler.map((s) => d.antworten[s][i - 1]);
+  let h = 0;
+  for (const c of `${duell.id}:${i}`) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const eins = (liste) => liste[h % liste.length];
+  const n = nameVon;
+
+  const schnellster = spieler
+    .filter((s) => d.antworten[s][i - 1] && d.antworten[s][i - 1].r)
+    .sort((a, b) => d.antworten[a][i - 1].ms - d.antworten[b][i - 1].ms)[0];
+  const serie = spieler.map((s) => [s, serieAusAntworten(d.antworten[s].slice(0, i).filter(Boolean))]).find(([, k]) => [3, 5, 7, 10].includes(k));
+  const vorn = fuehrend(jetzt);
+  const vornVorher = fuehrend(vorher);
+  const abstand = jetzt[erster] - jetzt[zweiter];
+
+  let text;
+  if (vorn.length === 1 && vornVorher.length === 1 && vorn[0] !== vornVorher[0] && i > 1) {
+    text = eins([`${n(erster)} übernimmt die Führung! 👑`, `Führungswechsel! ${n(erster)} ist jetzt vorne.`, `${n(erster)} schnappt sich Platz 1! 👑`]);
+  } else if (antworten.every((a) => a && !a.r)) {
+    text = eins(['Autsch, alle daneben! 🙈', 'Keiner wusste es – die Frage merken wir uns. 📚', 'Die war fies. Alle falsch! 😅']);
+  } else if (serie) {
+    text = eins([`${n(serie[0])} ist on fire – ${serie[1]} richtige in Folge! 🔥`, `${n(serie[0])} läuft heiß: ${serie[1]}er-Serie! 🔥`]);
+  } else if (antworten.every((a) => a && a.r)) {
+    text = eins(['Alle richtig – starke Runde! 💪', 'Da kennen sich alle aus. 👏', 'Alle richtig – jetzt entscheidet das Tempo! ⚡']);
+  } else if (abstand === 0) {
+    text = eins(['Gleichstand an der Spitze – alles offen! ⚖️', 'Punktgleich vorne – spannend! 😬']);
+  } else if (abstand <= 5) {
+    text = `Knapp! Nur ${abstand} ${abstand === 1 ? 'Punkt' : 'Punkte'} zwischen ${n(erster)} und ${n(zweiter)}.`;
+  } else {
+    text = eins([
+      `${n(erster)}, weiter so! 🏆`,
+      `${n(letzter)}, streng dich mehr an! 😤`,
+      `${n(letzter)}, da geht noch was! 💪`,
+      `${n(erster)} macht ordentlich Druck!`,
+      `${n(letzter)}, Zeit für die Aufholjagd! 🏃`,
+      schnellster ? `Blitzschnell: ${n(schnellster)} in ${(d.antworten[schnellster][i - 1].ms / 1000).toFixed(1).replace('.', ',')} s! ⚡` : `${n(erster)}, weiter so! 🏆`,
+    ]);
+  }
+  return i === d.fragen.length - 1 ? `${text} Letzte Frage – jetzt zählt’s!` : text;
 }
 
 function liveAufloesung(duell, i, loesung) {
