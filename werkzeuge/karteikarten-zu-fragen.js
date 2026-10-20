@@ -10,6 +10,8 @@
 // <zusatz.json> enthält je Karte (Schlüssel = Kartennummer) die falschen Antworten:
 //   "I.1": ["…", "…", "…"]
 //   oder "5": { "falsch": [...], "richtig": "…", "hinweis": "…" }   (richtig = Korrektur statt wörtlich)
+//   oder "7": { "eingabe": { "richtig": "Nageln", "alternativen": ["…"] } }  (Antwort eintippen;
+//         die wörtliche Kartenantwort wird dann nach dem Antworten als Erklärung gezeigt)
 // sowie optional "_id" (ID-Kürzel) und "_kategorien" ({ "Kartenkategorie": "Spielkategorie" }).
 // Ohne vorhandene zusatz.json wird eine Vorlage mit allen Karten erzeugt.
 // Die Fragen dieses Kapitels werden in fragen.json ersetzt, andere Kapitel bleiben unverändert.
@@ -79,6 +81,11 @@ const neu = karten.map((k, i) => {
   const richtig = eintrag.richtig ? eintrag.richtig.trim() : wörtlich;
   if (eintrag.richtig) korrigiert.push(nummer);
   const falsch = (eintrag.falsch || []).map((x) => x.trim()).filter(Boolean);
+  if (eintrag.eingabe) {
+    const e = eintrag.eingabe;
+    const erklaerung = [`Antwort laut Karte: ${richtig}`, eintrag.hinweis, seite ? `Quelle: Skript ${seite}` : ''].filter(Boolean).join(' · ');
+    return { id, kategorie: `${praefix} · ${thema}`, frage: reinerText(k.q), typ: 'eingabe', richtig: e.richtig.trim(), alternativen: e.alternativen || [], falsch: [], erklaerung };
+  }
   if (falsch.length < 3) fehler.push(`${nummer}: nur ${falsch.length} falsche Antworten`);
   if (falsch.includes(richtig)) fehler.push(`${nummer}: falsche Antwort ist identisch mit der richtigen`);
   const erklaerung = [eintrag.hinweis, seite ? `Quelle: Skript ${seite}` : ''].filter(Boolean).join(' · ') || undefined;

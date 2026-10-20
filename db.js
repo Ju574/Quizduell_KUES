@@ -10,8 +10,8 @@
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
 //   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie }]
-//   fragenHolen(pw, ids) → [{ id, kategorie, frage, antworten }]   (max. 20, ohne Lösung)
-//   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung }]       (max. 20)
+//   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten }]   (max. 20, ohne Lösung)
+//   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen }]   (max. 20)
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
 //   adminLernstandZuruecksetzen(pw, spielerId)
 //   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
@@ -252,12 +252,18 @@ function demoBackend() {
     async fragenHolen(pw, ids) {
       return (await demoFragen(pw))
         .filter((f) => ids.includes(f.id))
-        .map((f) => ({ id: f.id, kategorie: f.kategorie, frage: f.frage, antworten: mischen([f.richtig, ...f.falsch]) }));
+        .map((f) => ({
+          id: f.id,
+          kategorie: f.kategorie,
+          frage: f.frage,
+          typ: f.typ || 'auswahl',
+          antworten: f.typ === 'eingabe' ? [] : mischen([f.richtig, ...f.falsch]),
+        }));
     },
     async loesungenHolen(pw, ids) {
       return (await demoFragen(pw))
         .filter((f) => ids.includes(f.id))
-        .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null }));
+        .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null, alternativen: f.alternativen || [] }));
     },
     // Online-Anzeige im Demo-Modus: jeder Tab meldet sich alle 5 s im localStorage
     anwesenheit(spielerId, callback) {

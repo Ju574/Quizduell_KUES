@@ -366,3 +366,10 @@ textarea {
 
 /* Antworten mit Aufzählungen (Zeilenumbrüche aus den Karteikarten) */
 .antwort, .mehrzeilig { white-space: pre-line; }
+
+/* Eingabe-Fragen */
+.eingabe { display: flex; flex-direction: column; gap: 10px; }
+.eingabe input { font-size: 1.1rem; padding: 14px; border-width: 2px; background: var(--flaeche); }
+.eingabe input:focus { outline: none; border-color: var(--primaer); }
+.eingabe input.richtig { border-color: var(--ok); background: var(--ok-bg); }
+.eingabe input.falsch { border-color: var(--nok); background: var(--nok-bg); }

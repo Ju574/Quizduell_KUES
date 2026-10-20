@@ -23,7 +23,12 @@ fragen.forEach((f, i) => {
   for (const feld of ['id', 'kategorie', 'frage', 'richtig']) {
     if (typeof f[feld] !== 'string' || !f[feld].trim()) fehler.push(`${wo}: „${feld}“ fehlt`);
   }
-  if (!Array.isArray(f.falsch) || !f.falsch.length || f.falsch.some((x) => typeof x !== 'string' || !x.trim())) {
+  const eingabe = f.typ === 'eingabe';
+  if (f.typ && !['auswahl', 'eingabe'].includes(f.typ)) fehler.push(`${wo}: unbekannter typ „${f.typ}“`);
+  if (eingabe && f.alternativen && !Array.isArray(f.alternativen)) fehler.push(`${wo}: „alternativen“ muss eine Liste sein`);
+  if (eingabe) {
+    // Eingabe-Fragen brauchen keine falschen Antworten
+  } else if (!Array.isArray(f.falsch) || !f.falsch.length || f.falsch.some((x) => typeof x !== 'string' || !x.trim())) {
     fehler.push(`${wo}: „falsch“ muss eine Liste mit mindestens einer Antwort sein`);
   } else if (f.falsch.includes(f.richtig)) {
     fehler.push(`${wo}: die richtige Antwort steht auch bei „falsch“`);
@@ -41,13 +46,13 @@ const text = (s) => (s == null || s === '' ? 'null' : `'${String(s).replace(/'/g
 const liste = (a) => `array[${a.map(text).join(', ')}]::text[]`;
 
 const zeilen = fragen.map(
-  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch)}, ${text(f.erklaerung)})`
+  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch || [])}, ${text(f.erklaerung)}, ${text(f.typ || 'auswahl')}, ${liste(f.alternativen || [])})`
 );
 
 const sql = `-- Automatisch erzeugt aus ${quelle} am ${new Date().toISOString().slice(0, 16).replace('T', ' ')}
 -- ${fragen.length} Fragen. In Supabase → SQL Editor einfügen und ausführen.
 
-insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung) values
+insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen) values
 ${zeilen.join(',\n')}
 on conflict (id) do update set
   kategorie = excluded.kategorie,
@@ -55,6 +60,8 @@ on conflict (id) do update set
   richtig = excluded.richtig,
   falsch = excluded.falsch,
   erklaerung = excluded.erklaerung,
+  typ = excluded.typ,
+  alternativen = excluded.alternativen,
   aktiv = true,
   geaendert = now();
 

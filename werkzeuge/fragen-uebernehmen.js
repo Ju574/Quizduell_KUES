@@ -20,7 +20,9 @@ const ids = new Set();
 neu.forEach((f, i) => {
   const wo = `Nr. ${i + 1}${f.id ? ` (${f.id})` : ''}`;
   for (const feld of ['id', 'kategorie', 'frage', 'richtig']) if (!f[feld]) fehler.push(`${wo}: „${feld}“ fehlt`);
-  if (!Array.isArray(f.falsch) || f.falsch.length < 3) fehler.push(`${wo}: weniger als 3 falsche Antworten`);
+  if (f.typ === 'eingabe') {
+    if (f.alternativen && !Array.isArray(f.alternativen)) fehler.push(`${wo}: „alternativen“ muss eine Liste sein`);
+  } else if (!Array.isArray(f.falsch) || f.falsch.length < 3) fehler.push(`${wo}: weniger als 3 falsche Antworten`);
   else if (f.falsch.includes(f.richtig)) fehler.push(`${wo}: richtige Antwort steht auch bei „falsch“`);
   if (ids.has(f.id)) fehler.push(`${wo}: id doppelt`);
   ids.add(f.id);

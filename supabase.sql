@@ -113,6 +113,15 @@ create table if not exists public.fragen (
   geaendert timestamptz not null default now()
 );
 
+-- Fragetyp: 'auswahl' (Multiple Choice) oder 'eingabe' (Antwort eintippen, mit erlaubten Alternativen)
+alter table public.fragen add column if not exists typ text not null default 'auswahl';
+alter table public.fragen add column if not exists alternativen text[] not null default '{}';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'fragen_typ_check') then
+    alter table public.fragen add constraint fragen_typ_check check (typ in ('auswahl', 'eingabe'));
+  end if;
+end $$;
+
 alter table public.einstellungen enable row level security;
 alter table public.fragen enable row level security;
 revoke all on public.einstellungen, public.fragen from anon, authenticated;
@@ -147,8 +156,10 @@ begin
 end $$;
 
 -- Fragetexte mit gemischten Antworten – OHNE Hinweis, welche richtig ist
-create or replace function public.fragen_holen(p_passwort text, p_ids text[])
-returns table (id text, kategorie text, frage text, antworten text[])
+-- (bei Eingabe-Fragen ganz ohne Antworten)
+drop function if exists public.fragen_holen(text, text[]);
+create function public.fragen_holen(p_passwort text, p_ids text[])
+returns table (id text, kategorie text, frage text, typ text, antworten text[])
 language plpgsql
 stable
 security definer
@@ -163,15 +174,17 @@ begin
     raise exception 'Höchstens 20 Fragen pro Abruf';
   end if;
   return query
-    select f.id, f.kategorie, f.frage,
-           (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a)
+    select f.id, f.kategorie, f.frage, f.typ,
+           case when f.typ = 'eingabe' then '{}'::text[]
+                else (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a) end
     from public.fragen f
     where f.id = any(p_ids);
 end $$;
 
--- Lösungen – die App ruft sie erst ab, nachdem eine Antwort gewählt wurde
-create or replace function public.loesungen_holen(p_passwort text, p_ids text[])
-returns table (id text, richtig text, erklaerung text)
+-- Lösungen (inkl. erlaubter Alternativen) – die App ruft sie erst nach dem Antworten ab
+drop function if exists public.loesungen_holen(text, text[]);
+create function public.loesungen_holen(p_passwort text, p_ids text[])
+returns table (id text, richtig text, erklaerung text, alternativen text[])
 language plpgsql
 stable
 security definer
@@ -185,7 +198,7 @@ begin
   if coalesce(array_length(p_ids, 1), 0) > 20 then
     raise exception 'Höchstens 20 Lösungen pro Abruf';
   end if;
-  return query select f.id, f.richtig, f.erklaerung from public.fragen f where f.id = any(p_ids);
+  return query select f.id, f.richtig, f.erklaerung, f.alternativen from public.fragen f where f.id = any(p_ids);
 end $$;
 
 -- ===== Gemeldete Fragen =====

@@ -205,6 +205,63 @@ function sperren(gewaehlt) {
     knopf.disabled = true;
     if (i === gewaehlt) knopf.classList.add('gewaehlt');
   });
+  app.querySelectorAll('#eingabe-form input, #eingabe-form button').forEach((el) => (el.disabled = true));
+}
+
+// ===== Eingabe-Fragen (Antwort eintippen) =====
+// Tolerant: Groß-/Kleinschreibung, Leer- und Satzzeichen, ä/ae, ß/ss und Füllwörter wie „ca.“ zählen nicht;
+// kleine Tippfehler sind erlaubt (je nach Länge 0–2 Buchstaben). Zahlen müssen aber exakt stimmen.
+const eingabeFeld = () => `
+  <form id="eingabe-form" class="eingabe">
+    <input id="eingabe" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Antwort eintippen …">
+    <button class="btn primaer">Prüfen</button>
+  </form>`;
+
+const FUELLWORT = /^(ca\.?|circa|etwa|ungefaehr|bis zu|ueber|mehr als|der|die|das|ein|eine|einen)\s+/;
+
+function vorbereiten(text) {
+  let t = String(text || '')
+    .toLowerCase()
+    .trim()
+    .replace(/^[-−–]\s*(?=\d)/, 'minus ')
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+  for (let vorher = ''; vorher !== t; ) {
+    vorher = t;
+    t = t.replace(FUELLWORT, '');
+  }
+  const zahlen = (t.match(/\d+(?:[.,]\d+)?/g) || []).map((z) => z.replace(',', '.'));
+  return { kompakt: t.replace(/[^a-z0-9]/g, ''), zahlen: zahlen.join('|') };
+}
+
+function abstand(a, b) {
+  let vorige = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const zeile = [i];
+    for (let j = 1; j <= b.length; j++) {
+      zeile[j] = Math.min(vorige[j] + 1, zeile[j - 1] + 1, vorige[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    vorige = zeile;
+  }
+  return vorige[b.length];
+}
+
+// → { richtig, exakt } – exakt = ohne Tippfehler-Toleranz getroffen
+function eingabePruefen(eingabe, loesung) {
+  const e = vorbereiten(eingabe);
+  if (!e.kompakt || !loesung) return { richtig: false };
+  let tippfehler = false;
+  for (const kandidat of [loesung.richtig, ...(loesung.alternativen || [])]) {
+    const z = vorbereiten(kandidat);
+    if (e.kompakt === z.kompakt) return { richtig: true, exakt: true };
+    const erlaubt = z.kompakt.length <= 4 ? 0 : z.kompakt.length <= 8 ? 1 : 2;
+    if (e.zahlen === z.zahlen && abstand(e.kompakt, z.kompakt) <= erlaubt) tippfehler = true;
+  }
+  return { richtig: tippfehler, exakt: false };
 }
 
 function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
@@ -226,15 +283,17 @@ function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
 // beiAntwort(richtig) wird sofort aufgerufen (kann ein Promise liefern), weiter() nach Klick auf „Weiter“.
 function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
   ansicht = 'frage';
-  const optionen = shuffle(frage.antworten);
+  const eingabe = frage.typ === 'eingabe';
+  const optionen = eingabe ? [] : shuffle(frage.antworten);
   show(`
-    <div class="frage-kopf"><span>${esc(titel)}</span><span>${esc(info)}</span></div>
+    <div class="frage-kopf"><span>${esc(titel)}</span><span>${esc(info)}${eingabe ? ' · ✎ eintippen' : ''}</span></div>
     ${sekunden ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage.frage)}</div>
-    ${antwortKnoepfe(optionen)}
+    ${eingabe ? eingabeFeld() : antwortKnoepfe(optionen)}
     <div id="aufloesung" class="aufloesung"></div>`);
 
   let erledigt = false;
+  // gewaehlt: Index der gewählten Antwort bzw. eingetippter Text; null = Zeit abgelaufen
   const aufloesen = async (gewaehlt) => {
     if (erledigt) return;
     erledigt = true;
@@ -256,11 +315,15 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
       return;
     }
 
-    const richtig = !!loesung && gewaehlt != null && optionen[gewaehlt] === loesung.richtig;
-    markieren(optionen, gewaehlt, loesung && loesung.richtig);
+    const pruefung = eingabe && gewaehlt != null ? eingabePruefen(gewaehlt, loesung) : null;
+    const richtig = eingabe ? !!(pruefung && pruefung.richtig) : !!loesung && gewaehlt != null && optionen[gewaehlt] === loesung.richtig;
+    if (eingabe) app.querySelector('#eingabe').classList.add(richtig ? 'richtig' : 'falsch');
+    else markieren(optionen, gewaehlt, loesung && loesung.richtig);
     const gespeichert = Promise.resolve(beiAntwort(richtig));
+    const text = gewaehlt == null ? '⏱ Zeit abgelaufen' : richtig ? (pruefung && !pruefung.exakt ? '✓ Richtig! (kleiner Tippfehler)' : '✓ Richtig!') : '✗ Leider falsch';
     box.innerHTML = `
-      <p class="meldung ${richtig ? 'ok' : 'nok'}">${gewaehlt == null ? '⏱ Zeit abgelaufen' : richtig ? '✓ Richtig!' : '✗ Leider falsch'}</p>
+      <p class="meldung ${richtig ? 'ok' : 'nok'}">${text}</p>
+      ${eingabe && loesung && !(pruefung && pruefung.exakt) ? `<p class="karte ok mehrzeilig">Richtige Antwort: ${esc(loesung.richtig)}</p>` : ''}
       ${loesung && loesung.erklaerung ? `<p class="erklaerung">${esc(loesung.erklaerung)}</p>` : ''}
       <button class="btn primaer" id="weiter">Weiter</button>
       <p class="mitte">${meldenKnopf(frage.id)}</p>`;
@@ -278,7 +341,20 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter }) {
     knopf.focus({ preventScroll: true });
   };
   app.querySelectorAll('.antwort').forEach((k, i) => k.addEventListener('click', () => aufloesen(i)));
+  if (eingabe) eingabeAktivieren(aufloesen);
   if (sekunden) timerStarten(app.querySelector('.timer-balken'), sekunden * 1000, () => aufloesen(null));
+}
+
+// Absenden des Eingabefelds (Enter oder „Prüfen“) → beiAbsenden(text)
+function eingabeAktivieren(beiAbsenden) {
+  const feld = app.querySelector('#eingabe');
+  feld.focus();
+  on('#eingabe-form', (e) => {
+    e.preventDefault();
+    const text = feld.value.trim();
+    if (text) beiAbsenden(text);
+    else feld.focus();
+  }, 'submit');
 }
 
 // ===== Frage melden =====
@@ -1138,14 +1214,15 @@ function liveFrage(live) {
   const d = duell.daten;
   const i = d.index;
   const frage = FRAGEN_TEXT.get(d.fragen[i]);
-  live.optionen = frage ? shuffle(frage.antworten) : [];
+  const eingabe = !!frage && frage.typ === 'eingabe';
+  live.optionen = frage && !eingabe ? shuffle(frage.antworten) : [];
   live.gewaehlt = null;
   show(`
     ${liveKopf(duell)}
-    <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}</span></div>
+    <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}${eingabe ? ' · ✎ eintippen' : ''}</span></div>
     ${liveDauer(duell) ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</div>
-    ${antwortKnoepfe(live.optionen)}
+    ${eingabe ? eingabeFeld() : antwortKnoepfe(live.optionen)}
     <p class="meldung" id="meine-meldung"></p>
     <p class="gegner-status" id="gegner-status"></p>
     <button class="link gedaempft" id="aufgeben">Aufgeben</button>`);
@@ -1159,24 +1236,28 @@ function liveFrage(live) {
     return;
   }
   app.querySelectorAll('.antwort').forEach((k, idx) => (k.onclick = () => liveAntworten(live, frage, idx)));
+  if (eingabe) eingabeAktivieren((text) => liveAntworten(live, frage, text));
 }
 
-async function liveAntworten(live, frage, idx) {
+// auswahl: Index der gewählten Antwort oder eingetippter Text
+async function liveAntworten(live, frage, auswahl) {
   if (live.gewaehlt != null) return;
   const d = live.duell.daten;
   const i = d.index;
   const dauer = liveDauer(live.duell);
   const ms = Date.now() - d.start;
   if (dauer && ms > dauer) return;
-  live.gewaehlt = idx;
-  sperren(idx);
+  live.gewaehlt = auswahl;
+  sperren(auswahl);
   const phase = live.phase;
   try {
     const [loesung] = await loesungenLaden([frage.id]);
-    const richtig = !!loesung && live.optionen[idx] === loesung.richtig;
+    const eingabe = frage.typ === 'eingabe';
+    const richtig = eingabe ? eingabePruefen(auswahl, loesung).richtig : !!loesung && live.optionen[auswahl] === loesung.richtig;
     const p = richtig ? livePunkte(ms, dauer) : 0;
     if (live.phase === phase) {
-      markieren(live.optionen, idx, loesung && loesung.richtig);
+      if (eingabe) app.querySelector('#eingabe').classList.add(richtig ? 'richtig' : 'falsch');
+      else markieren(live.optionen, auswahl, loesung && loesung.richtig);
       app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span>` : '<span class="nok">✗ Leider falsch</span>';
     }
     lernstandBuchen(frage.id, richtig);
