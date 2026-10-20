@@ -4,3 +4,5 @@ fragen.json
 fragen-import.sql
 # Deine Unterlagen und die daraus erzeugten Fragen bleiben lokal
 quellen/
+# Lokaler Schlüssel für den Fragen-Import – nie hochladen
+.import-schluessel

@@ -16,7 +16,9 @@ Die Seite läuft auf GitHub Pages, die Daten liegen in Supabase.
 | `gruppen-passwort.sql` | Setzt oder ändert das Gruppen-Passwort |
 | `admin-passwort.sql` | Setzt oder ändert das Admin-Passwort |
 | `werkzeuge/karteikarten-zu-fragen.js` | Holt Fragen wörtlich aus einer Karteikarten-HTML-Datei in `fragen.json` |
-| `werkzeuge/fragen-zu-sql.js` | Macht aus `fragen.json` ein Import-Skript für Supabase |
+| `werkzeuge/fragen-uebernehmen.js` | Übernimmt selbst erstellte Fragen (z. B. aus Zusammenfassungen) in `fragen.json` |
+| `werkzeuge/fragen-importieren.js` | Lädt `fragen.json` direkt in Supabase |
+| `werkzeuge/fragen-zu-sql.js` | Macht aus `fragen.json` ein Import-Skript für den SQL Editor |
 
 `quellen/` (Unterlagen), `fragen.json` und `fragen-import.sql` sind über `.gitignore` ausgeschlossen und kommen nie ins Repository.
 
@@ -39,8 +41,8 @@ In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der 
 ## Fragen ergänzen oder korrigieren
 
 1. Fragen in `fragen.json` bearbeiten (Format siehe unten).
-2. `node werkzeuge/fragen-zu-sql.js` ausführen. Das prüft die Datei und erzeugt `fragen-import.sql`.
-3. `fragen-import.sql` im Supabase SQL Editor ausführen.
+2. `node werkzeuge/fragen-importieren.js` ausführen (optional nur bestimmte Kürzel, z. B. `mk- mz-`). Das lädt die Fragen direkt in Supabase. Voraussetzung ist der lokale Import-Schlüssel in `.import-schluessel`; in der Datenbank liegt davon nur ein Hash.
+   Alternativ: `node werkzeuge/fragen-zu-sql.js` erzeugt `fragen-import.sql` für den Supabase SQL Editor.
 
 ```json
 {
@@ -56,6 +58,7 @@ In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der 
 - Die `id` darf sich **nie** ändern, denn Lernstand und Duelle hängen daran. Texte darf man korrigieren.
 - Fragen, die aus `fragen.json` entfernt werden, werden beim nächsten Import deaktiviert, aber nicht gelöscht.
 - Eine Kategorie braucht mindestens 3 Fragen, um im Rundenduell zu erscheinen.
+- **Eintipp-Fragen:** `"typ": "eingabe"` plus `"alternativen": [ … ]` (weitere erlaubte Antworten); `falsch` entfällt. Groß-/Kleinschreibung, Satzzeichen, ä/ae, ß/ss und Füllwörter wie „ca.“ zählen nicht, kleine Tippfehler sind erlaubt, Zahlen müssen exakt stimmen.
 
 ## Spielmodi
 

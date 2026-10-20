@@ -345,3 +345,63 @@ grant execute on function public.passwort_ok(text) to anon, authenticated;
 grant execute on function public.fragen_katalog(text) to anon, authenticated;
 grant execute on function public.fragen_holen(text, text[]) to anon, authenticated;
 grant execute on function public.loesungen_holen(text, text[]) to anon, authenticated;
+
+-- ===== Fragen-Import per Skript =====
+-- werkzeuge/fragen-importieren.js nutzt einen eigenen Import-Schlüssel (lokal in .import-schluessel,
+-- in der Datenbank nur als Hash unter einstellungen.import_schluessel).
+
+create or replace function public.fragen_importieren(p_schluessel text, p_fragen jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  anzahl integer;
+begin
+  if not exists (
+    select 1 from public.einstellungen
+    where schluessel = 'import_schluessel' and wert = crypt(coalesce(p_schluessel, ''), wert)
+  ) then
+    raise exception 'Falscher Import-Schlüssel';
+  end if;
+  if jsonb_array_length(p_fragen) > 100 then
+    raise exception 'Höchstens 100 Fragen pro Aufruf';
+  end if;
+  insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen)
+  select f.id, f.kategorie, f.frage, f.richtig,
+         coalesce(f.falsch, '{}'), nullif(f.erklaerung, ''), coalesce(f.typ, 'auswahl'), coalesce(f.alternativen, '{}')
+  from jsonb_to_recordset(p_fragen) as f(id text, kategorie text, frage text, richtig text, falsch text[], erklaerung text, typ text, alternativen text[])
+  on conflict (id) do update set
+    kategorie = excluded.kategorie, frage = excluded.frage, richtig = excluded.richtig, falsch = excluded.falsch,
+    erklaerung = excluded.erklaerung, typ = excluded.typ, alternativen = excluded.alternativen,
+    aktiv = true, geaendert = now();
+  get diagnostics anzahl = row_count;
+  return anzahl;
+end $$;
+
+create or replace function public.fragen_deaktivieren(p_schluessel text, p_kuerzel text, p_behalten text[])
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  anzahl integer;
+begin
+  if not exists (
+    select 1 from public.einstellungen
+    where schluessel = 'import_schluessel' and wert = crypt(coalesce(p_schluessel, ''), wert)
+  ) then
+    raise exception 'Falscher Import-Schlüssel';
+  end if;
+  update public.fragen set aktiv = false, geaendert = now()
+  where aktiv and id like p_kuerzel || '%' and id <> all (p_behalten);
+  get diagnostics anzahl = row_count;
+  return anzahl;
+end $$;
+
+revoke execute on function public.fragen_importieren(text, jsonb) from public;
+revoke execute on function public.fragen_deaktivieren(text, text, text[]) from public;
+grant execute on function public.fragen_importieren(text, jsonb) to anon, authenticated;
+grant execute on function public.fragen_deaktivieren(text, text, text[]) to anon, authenticated;
