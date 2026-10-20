@@ -10,8 +10,9 @@
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
 //   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie }]
-//   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten }]   (max. 20, ohne Lösung)
-//   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen }]   (max. 20)
+//   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten, bild }]   (max. 20, ohne Lösung)
+//   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen, bild_nach }]   (max. 20)
+//   bildHolen(pw, bildId) → Adresse für <img src> (Gruppen- oder Admin-Passwort)
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
 //   adminLernstandZuruecksetzen(pw, spielerId)
 //   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
@@ -103,6 +104,11 @@ function supabaseBackend(cfg) {
     },
     async loesungenHolen(pw, ids) {
       return pruefe(await sb.rpc('loesungen_holen', { p_passwort: pw, p_ids: ids }));
+    },
+    async bildHolen(pw, bildId) {
+      const [b] = pruefe(await sb.rpc('bild_holen', { p_passwort: pw, p_id: bildId }));
+      if (!b) throw new Error('Bild fehlt: ' + bildId);
+      return `data:${b.mime};base64,${b.daten}`;
     },
     // Wer gerade online ist (Supabase Realtime Presence, ohne Tabelle) – callback(Set der Spieler-IDs)
     anwesenheit(spielerId, callback) {
@@ -262,13 +268,19 @@ function demoBackend() {
           kategorie: f.kategorie,
           frage: f.frage,
           typ: f.typ || 'auswahl',
-          antworten: f.typ === 'eingabe' ? [] : mischen([f.richtig, ...f.falsch]),
+          antworten: f.typ === 'eingabe' ? [] : f.typ === 'beschriften' ? beschriftungNummern(f.richtig) : mischen([f.richtig, ...f.falsch]),
+          bild: f.bild || null,
         }));
     },
     async loesungenHolen(pw, ids) {
       return (await demoFragen(pw))
         .filter((f) => ids.includes(f.id))
-        .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null, alternativen: f.alternativen || [] }));
+        .map((f) => ({ id: f.id, richtig: f.richtig, erklaerung: f.erklaerung || null, alternativen: f.alternativen || [], bild_nach: f.bild_nach || null }));
+    },
+    // Bilder liegen im Demo-Modus lokal in quellen/bilder/
+    async bildHolen(pw, bildId) {
+      if (pw !== 'demo' && pw !== 'admin') throw new Error('Falsches Passwort');
+      return 'quellen/bilder/' + encodeURIComponent(bildId);
     },
     // Online-Anzeige im Demo-Modus: jeder Tab meldet sich alle 5 s im localStorage
     anwesenheit(spielerId, callback) {
@@ -369,6 +381,10 @@ async function demoFragen(pw) {
   }
   return demoFragenCache;
 }
+
+// „1: Heizelement⏎2: …“ → ['1', '2', …] (wie fragen_holen in der Datenbank)
+const beschriftungNummern = (richtig) =>
+  String(richtig).split('\n').filter((z) => z.includes(':')).map((z) => z.split(':')[0].trim());
 
 function mischen(liste) {
   const a = [...liste];

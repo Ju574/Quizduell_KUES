@@ -3,6 +3,7 @@
 //   node werkzeuge/fragen-uebernehmen.js <fragen-datei.json> [fragen.json]
 //
 // Die Datei enthält Fragen im normalen Format ({ id, kategorie, frage, richtig, falsch, erklaerung }).
+// Skizzen („bild“, „bild_nach“) sind Dateinamen in quellen/bilder/.
 // Alle bisherigen Fragen mit demselben ID-Kürzel (z. B. „mz-“) werden ersetzt, alles andere bleibt.
 
 'use strict';
@@ -20,10 +21,15 @@ const ids = new Set();
 neu.forEach((f, i) => {
   const wo = `Nr. ${i + 1}${f.id ? ` (${f.id})` : ''}`;
   for (const feld of ['id', 'kategorie', 'frage', 'richtig']) if (!f[feld]) fehler.push(`${wo}: „${feld}“ fehlt`);
-  if (f.typ === 'eingabe') {
+  if (f.typ === 'eingabe' || f.typ === 'beschriften') {
     if (f.alternativen && !Array.isArray(f.alternativen)) fehler.push(`${wo}: „alternativen“ muss eine Liste sein`);
+    if (f.typ === 'beschriften' && !String(f.richtig).split('\n').every((z) => /^[^:]+:\s*\S/.test(z)))
+      fehler.push(`${wo}: „richtig“ braucht je Zeile „Nr: Begriff“`);
   } else if (!Array.isArray(f.falsch) || f.falsch.length < 3) fehler.push(`${wo}: weniger als 3 falsche Antworten`);
   else if (f.falsch.includes(f.richtig)) fehler.push(`${wo}: richtige Antwort steht auch bei „falsch“`);
+  for (const feld of ['bild', 'bild_nach']) {
+    if (f[feld] && !fs.existsSync(`quellen/bilder/${f[feld]}`)) fehler.push(`${wo}: quellen/bilder/${f[feld]} fehlt`);
+  }
   if (ids.has(f.id)) fehler.push(`${wo}: id doppelt`);
   ids.add(f.id);
 });

@@ -59,6 +59,8 @@ In `config.js` stehen die **Project URL** und der **publishable/anon key**. Der 
 - Fragen, die aus `fragen.json` entfernt werden, werden beim nächsten Import deaktiviert, aber nicht gelöscht.
 - Eine Kategorie braucht mindestens 3 Fragen, um im Rundenduell zu erscheinen.
 - **Eintipp-Fragen:** `"typ": "eingabe"` plus `"alternativen": [ … ]` (weitere erlaubte Antworten); `falsch` entfällt. Groß-/Kleinschreibung, Satzzeichen, ä/ae, ß/ss und Füllwörter wie „ca.“ zählen nicht, kleine Tippfehler sind erlaubt, Zahlen müssen exakt stimmen.
+- **Skizzen:** `"bild": "datei.png"` erscheint über der Frage, `"bild_nach": "datei.png"` erst in der Auflösung. Die Dateien liegen lokal in `quellen/bilder/` und werden von `fragen-importieren.js` geschützt in die Datenbank geladen (nur mit Gruppen- oder Admin-Passwort abrufbar).
+- **Skizze beschriften:** `"typ": "beschriften"` mit nummerierter Skizze in `bild`. In `richtig` steht je Zeile `Nr: Begriff` (z. B. `"1: Heizelement\n2: Isolierteil"`), weitere erlaubte Begriffe in `alternativen` ebenfalls als `"1: Heizung"`. Jedes Feld wird wie eine Eintipp-Frage geprüft; die Frage zählt als richtig, wenn alle Felder stimmen. Pro weiterem Feld gibt es 10 s mehr Zeit.
 
 ## Spielmodi
 

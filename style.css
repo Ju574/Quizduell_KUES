@@ -374,6 +374,23 @@ textarea {
 .eingabe input.richtig { border-color: var(--ok); background: var(--ok-bg); }
 .eingabe input.falsch { border-color: var(--nok); background: var(--nok-bg); }
 
+/* Skizzen (weißer Hintergrund, damit die Zeichnungen auch im Dunkelmodus lesbar bleiben) */
+.skizze { margin: 0 0 12px; padding: 6px; background: #fff; border: 1px solid var(--rand); border-radius: 12px; text-align: center; min-height: 48px; }
+.skizze img { display: block; width: 100%; height: auto; max-height: 55vh; object-fit: contain; cursor: zoom-in; }
+.skizze-gross { padding: 8px; cursor: zoom-out; }
+.skizze-gross img { max-width: 100%; max-height: 100%; background: #fff; border-radius: 8px; }
+
+/* Beschriften-Fragen: Nummer + Eingabefeld, Lösung darunter */
+.beschriften { display: flex; flex-direction: column; gap: 8px; }
+.beschriften .beschriften-zeile { display: grid; grid-template-columns: 2.2em 1fr; align-items: center; gap: 4px 8px; margin: 0; }
+.beschriften .nr { display: flex; align-items: center; justify-content: center; width: 2em; height: 2em; border-radius: 50%; background: var(--primaer); color: #fff; font-weight: 700; }
+.beschriften input { font-size: 1rem; padding: 10px 12px; border-width: 2px; background: var(--flaeche); }
+.beschriften input:focus { outline: none; border-color: var(--primaer); }
+.beschriften input.richtig { border-color: var(--ok); background: var(--ok-bg); }
+.beschriften input.falsch { border-color: var(--nok); background: var(--nok-bg); }
+.beschriften .soll { grid-column: 2; }
+.beschriften .soll:empty { display: none; }
+
 /* ---------- Gimmicks ---------- */
 /* VS-Intro */
 .vs-intro {

@@ -23,11 +23,11 @@ fragen.forEach((f, i) => {
   for (const feld of ['id', 'kategorie', 'frage', 'richtig']) {
     if (typeof f[feld] !== 'string' || !f[feld].trim()) fehler.push(`${wo}: „${feld}“ fehlt`);
   }
-  const eingabe = f.typ === 'eingabe';
-  if (f.typ && !['auswahl', 'eingabe'].includes(f.typ)) fehler.push(`${wo}: unbekannter typ „${f.typ}“`);
+  const eingabe = f.typ === 'eingabe' || f.typ === 'beschriften';
+  if (f.typ && !['auswahl', 'eingabe', 'beschriften'].includes(f.typ)) fehler.push(`${wo}: unbekannter typ „${f.typ}“`);
   if (eingabe && f.alternativen && !Array.isArray(f.alternativen)) fehler.push(`${wo}: „alternativen“ muss eine Liste sein`);
   if (eingabe) {
-    // Eingabe-Fragen brauchen keine falschen Antworten
+    // Eingabe- und Beschriften-Fragen brauchen keine falschen Antworten
   } else if (!Array.isArray(f.falsch) || !f.falsch.length || f.falsch.some((x) => typeof x !== 'string' || !x.trim())) {
     fehler.push(`${wo}: „falsch“ muss eine Liste mit mindestens einer Antwort sein`);
   } else if (f.falsch.includes(f.richtig)) {
@@ -46,13 +46,13 @@ const text = (s) => (s == null || s === '' ? 'null' : `'${String(s).replace(/'/g
 const liste = (a) => `array[${a.map(text).join(', ')}]::text[]`;
 
 const zeilen = fragen.map(
-  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch || [])}, ${text(f.erklaerung)}, ${text(f.typ || 'auswahl')}, ${liste(f.alternativen || [])})`
+  (f) => `  (${text(f.id)}, ${text(f.kategorie)}, ${text(f.frage)}, ${text(f.richtig)}, ${liste(f.falsch || [])}, ${text(f.erklaerung)}, ${text(f.typ || 'auswahl')}, ${liste(f.alternativen || [])}, ${text(f.bild)}, ${text(f.bild_nach)})`
 );
 
 const sql = `-- Automatisch erzeugt aus ${quelle} am ${new Date().toISOString().slice(0, 16).replace('T', ' ')}
 -- ${fragen.length} Fragen. In Supabase → SQL Editor einfügen und ausführen.
 
-insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen) values
+insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach) values
 ${zeilen.join(',\n')}
 on conflict (id) do update set
   kategorie = excluded.kategorie,
@@ -62,6 +62,8 @@ on conflict (id) do update set
   erklaerung = excluded.erklaerung,
   typ = excluded.typ,
   alternativen = excluded.alternativen,
+  bild = excluded.bild,
+  bild_nach = excluded.bild_nach,
   aktiv = true,
   geaendert = now();
 
@@ -70,6 +72,7 @@ where aktiv and id <> all (${liste(fragen.map((f) => f.id))});
 `;
 
 fs.writeFileSync(ziel, sql);
+if (fragen.some((f) => f.bild || f.bild_nach)) console.log('Hinweis: Die Skizzen selbst lädt nur werkzeuge/fragen-importieren.js hoch.');
 const kategorien = {};
 fragen.forEach((f) => (kategorien[f.kategorie] = (kategorien[f.kategorie] || 0) + 1));
 console.log(`${fragen.length} Fragen → ${ziel}`);

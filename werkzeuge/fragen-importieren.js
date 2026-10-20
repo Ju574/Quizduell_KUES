@@ -32,11 +32,24 @@ async function rpc(name, body) {
   return JSON.parse(text);
 }
 
+const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
+
 (async () => {
+  // Zuerst die Skizzen (aus quellen/bilder/), damit keine Frage auf ein fehlendes Bild zeigt
+  const bilder = [...new Set(fragen.flatMap((f) => [f.bild, f.bild_nach]).filter(Boolean))];
+  for (const bild of bilder) {
+    const mime = MIME[bild.split('.').pop().toLowerCase()];
+    if (!mime) throw new Error(`Unbekanntes Bildformat: ${bild}`);
+    const daten = fs.readFileSync(`quellen/bilder/${bild}`).toString('base64');
+    await rpc('bilder_importieren', { p_schluessel: schluessel, p_bilder: [{ id: bild, mime, daten }] });
+  }
+  if (bilder.length) console.log(`${bilder.length} Skizzen hochgeladen.`);
+
   let importiert = 0;
   for (let i = 0; i < fragen.length; i += 50) {
-    const paket = fragen.slice(i, i + 50).map(({ id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen }) => ({
+    const paket = fragen.slice(i, i + 50).map(({ id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach }) => ({
       id, kategorie, frage, richtig, falsch: falsch || [], erklaerung: erklaerung || null, typ: typ || 'auswahl', alternativen: alternativen || [],
+      bild: bild || null, bild_nach: bild_nach || null,
     }));
     importiert += await rpc('fragen_importieren', { p_schluessel: schluessel, p_fragen: paket });
   }

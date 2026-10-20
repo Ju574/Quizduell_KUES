@@ -113,14 +113,24 @@ create table if not exists public.fragen (
   geaendert timestamptz not null default now()
 );
 
--- Fragetyp: 'auswahl' (Multiple Choice) oder 'eingabe' (Antwort eintippen, mit erlaubten Alternativen)
+-- Fragetyp: 'auswahl' (Multiple Choice), 'eingabe' (Antwort eintippen, mit erlaubten Alternativen)
+-- oder 'beschriften' (nummerierte Skizze; richtig = je Zeile „Nr: Lösung“, alternativen ebenfalls „Nr: …“)
 alter table public.fragen add column if not exists typ text not null default 'auswahl';
 alter table public.fragen add column if not exists alternativen text[] not null default '{}';
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'fragen_typ_check') then
-    alter table public.fragen add constraint fragen_typ_check check (typ in ('auswahl', 'eingabe'));
-  end if;
-end $$;
+-- Optionale Skizzen: Verweis auf public.bilder; "bild" steht über der Frage, "bild_nach" erscheint erst in der Auflösung
+alter table public.fragen add column if not exists bild text;
+alter table public.fragen add column if not exists bild_nach text;
+
+create table if not exists public.bilder (
+  id text primary key,
+  mime text not null,
+  daten text not null,            -- Base64
+  geaendert timestamptz not null default now()
+);
+alter table public.bilder enable row level security;
+revoke all on public.bilder from anon, authenticated;
+alter table public.fragen drop constraint if exists fragen_typ_check;
+alter table public.fragen add constraint fragen_typ_check check (typ in ('auswahl', 'eingabe', 'beschriften'));
 
 alter table public.einstellungen enable row level security;
 alter table public.fragen enable row level security;
@@ -156,10 +166,10 @@ begin
 end $$;
 
 -- Fragetexte mit gemischten Antworten – OHNE Hinweis, welche richtig ist
--- (bei Eingabe-Fragen ganz ohne Antworten)
+-- (bei Eingabe-Fragen ganz ohne Antworten, bei Beschriften-Fragen nur die Nummern der Felder)
 drop function if exists public.fragen_holen(text, text[]);
 create function public.fragen_holen(p_passwort text, p_ids text[])
-returns table (id text, kategorie text, frage text, typ text, antworten text[])
+returns table (id text, kategorie text, frage text, typ text, antworten text[], bild text)
 language plpgsql
 stable
 security definer
@@ -176,7 +186,12 @@ begin
   return query
     select f.id, f.kategorie, f.frage, f.typ,
            case when f.typ = 'eingabe' then '{}'::text[]
-                else (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a) end
+                when f.typ = 'beschriften' then array(
+                  select (regexp_match(z, '^\s*([^:]+?)\s*:'))[1]
+                  from unnest(string_to_array(f.richtig, E'\n')) with ordinality as t(z, n)
+                  where z ~ ':' order by n)
+                else (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a) end,
+           f.bild
     from public.fragen f
     where f.id = any(p_ids);
 end $$;
@@ -184,7 +199,7 @@ end $$;
 -- Lösungen (inkl. erlaubter Alternativen) – die App ruft sie erst nach dem Antworten ab
 drop function if exists public.loesungen_holen(text, text[]);
 create function public.loesungen_holen(p_passwort text, p_ids text[])
-returns table (id text, richtig text, erklaerung text, alternativen text[])
+returns table (id text, richtig text, erklaerung text, alternativen text[], bild_nach text)
 language plpgsql
 stable
 security definer
@@ -198,7 +213,7 @@ begin
   if coalesce(array_length(p_ids, 1), 0) > 20 then
     raise exception 'Höchstens 20 Lösungen pro Abruf';
   end if;
-  return query select f.id, f.richtig, f.erklaerung, f.alternativen from public.fragen f where f.id = any(p_ids);
+  return query select f.id, f.richtig, f.erklaerung, f.alternativen, f.bild_nach from public.fragen f where f.id = any(p_ids);
 end $$;
 
 -- ===== Gemeldete Fragen =====
@@ -368,13 +383,16 @@ begin
   if jsonb_array_length(p_fragen) > 100 then
     raise exception 'Höchstens 100 Fragen pro Aufruf';
   end if;
-  insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen)
+  insert into public.fragen (id, kategorie, frage, richtig, falsch, erklaerung, typ, alternativen, bild, bild_nach)
   select f.id, f.kategorie, f.frage, f.richtig,
-         coalesce(f.falsch, '{}'), nullif(f.erklaerung, ''), coalesce(f.typ, 'auswahl'), coalesce(f.alternativen, '{}')
-  from jsonb_to_recordset(p_fragen) as f(id text, kategorie text, frage text, richtig text, falsch text[], erklaerung text, typ text, alternativen text[])
+         coalesce(f.falsch, '{}'), nullif(f.erklaerung, ''), coalesce(f.typ, 'auswahl'), coalesce(f.alternativen, '{}'),
+         nullif(f.bild, ''), nullif(f.bild_nach, '')
+  from jsonb_to_recordset(p_fragen) as f(id text, kategorie text, frage text, richtig text, falsch text[], erklaerung text,
+                                          typ text, alternativen text[], bild text, bild_nach text)
   on conflict (id) do update set
     kategorie = excluded.kategorie, frage = excluded.frage, richtig = excluded.richtig, falsch = excluded.falsch,
     erklaerung = excluded.erklaerung, typ = excluded.typ, alternativen = excluded.alternativen,
+    bild = excluded.bild, bild_nach = excluded.bild_nach,
     aktiv = true, geaendert = now();
   get diagnostics anzahl = row_count;
   return anzahl;
@@ -409,8 +427,10 @@ grant execute on function public.fragen_deaktivieren(text, text, text[]) to anon
 -- ===== Admin: Fragen durchsehen und zum Entfernen markieren =====
 alter table public.fragen add column if not exists zum_entfernen boolean not null default false;
 
-create or replace function public.admin_fragen(p_passwort text)
-returns table (id text, kategorie text, frage text, typ text, richtig text, falsch text[], alternativen text[], erklaerung text, zum_entfernen boolean)
+drop function if exists public.admin_fragen(text);
+create function public.admin_fragen(p_passwort text)
+returns table (id text, kategorie text, frage text, typ text, richtig text, falsch text[], alternativen text[], erklaerung text,
+               zum_entfernen boolean, bild text, bild_nach text)
 language plpgsql
 stable
 security definer
@@ -422,7 +442,7 @@ begin
     raise exception 'Falsches Admin-Passwort';
   end if;
   return query
-    select f.id, f.kategorie, f.frage, f.typ, f.richtig, f.falsch, f.alternativen, f.erklaerung, f.zum_entfernen
+    select f.id, f.kategorie, f.frage, f.typ, f.richtig, f.falsch, f.alternativen, f.erklaerung, f.zum_entfernen, f.bild, f.bild_nach
     from public.fragen f where f.aktiv order by f.kategorie, f.id;
 end $$;
 
@@ -443,3 +463,47 @@ revoke execute on function public.admin_fragen(text) from public;
 revoke execute on function public.admin_frage_markieren(text, text, boolean) from public;
 grant execute on function public.admin_fragen(text) to anon, authenticated;
 grant execute on function public.admin_frage_markieren(text, text, boolean) to anon, authenticated;
+
+-- ===== Skizzen =====
+-- Bilder liegen geschützt in public.bilder und sind nur mit Gruppen- oder Admin-Passwort abrufbar.
+create or replace function public.bild_holen(p_passwort text, p_id text)
+returns table (mime text, daten text)
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+#variable_conflict use_column
+begin
+  if not public.passwort_ok(p_passwort) and not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Passwort';
+  end if;
+  return query select b.mime, b.daten from public.bilder b where b.id = p_id;
+end $$;
+
+create or replace function public.bilder_importieren(p_schluessel text, p_bilder jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  anzahl integer;
+begin
+  if not exists (
+    select 1 from public.einstellungen
+    where schluessel = 'import_schluessel' and wert = crypt(coalesce(p_schluessel, ''), wert)
+  ) then
+    raise exception 'Falscher Import-Schlüssel';
+  end if;
+  insert into public.bilder (id, mime, daten)
+  select b.id, b.mime, b.daten from jsonb_to_recordset(p_bilder) as b(id text, mime text, daten text)
+  on conflict (id) do update set mime = excluded.mime, daten = excluded.daten, geaendert = now();
+  get diagnostics anzahl = row_count;
+  return anzahl;
+end $$;
+
+revoke execute on function public.bild_holen(text, text) from public;
+revoke execute on function public.bilder_importieren(text, jsonb) from public;
+grant execute on function public.bild_holen(text, text) to anon, authenticated;
+grant execute on function public.bilder_importieren(text, jsonb) to anon, authenticated;
