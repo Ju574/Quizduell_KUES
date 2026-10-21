@@ -91,9 +91,9 @@ const Ton = (() => {
     },
     laden: (t) => ton(150, t, 1.0, { typ: 'sawtooth', bis: 1400, laut: 0.12, anschlag: 0.3 }),
     laser: (t) => ton(1600, t, 0.35, { typ: 'square', bis: 120, laut: 0.18 }),
-    ladenLang: (t) => {
-      ton(110, t, 4.0, { typ: 'sawtooth', bis: 900, laut: 0.07, anschlag: 0.6 });
-      ton(220, t, 4.0, { bis: 1800, laut: 0.04, anschlag: 0.6 });
+    ladenLang: (t, lang = 4.0) => {
+      ton(110, t, lang, { typ: 'sawtooth', bis: 900, laut: 0.07, anschlag: 0.6 });
+      ton(220, t, lang, { bis: 1800, laut: 0.04, anschlag: 0.6 });
     },
     lockon: (t) => {
       for (let k = 0; k < 4; k++) ton(1200, t + k * 0.12, 0.06, { typ: 'square', laut: 0.1 });
@@ -188,11 +188,11 @@ const Ton = (() => {
       if (an) freischalten();
       return an;
     },
-    // name: Schlüssel aus SOUNDS, verzoegerung in Sekunden
-    spiel(name, verzoegerung = 0) {
+    // name: Schlüssel aus SOUNDS, verzoegerung in Sekunden, lang: Länge für Töne mit einstellbarer Dauer
+    spiel(name, verzoegerung = 0, lang) {
       if (!an || !ctx || ctx.state !== 'running' || !SOUNDS[name]) return;
       try {
-        SOUNDS[name](ctx.currentTime + 0.01 + verzoegerung);
+        SOUNDS[name](ctx.currentTime + 0.01 + verzoegerung, lang);
       } catch (e) {
         console.error(e);
       }
@@ -217,7 +217,8 @@ const Finisher = (() => {
       this.rect(x, y, b, h);
     };
   }
-  const ARTEN =['orbital', 'hu', 'blitzer', 'abschlepp', 'motor'];
+  // Vorerst nur die fertigen Mini-Filme; blitzer, abschlepp, motor kommen später wieder dazu
+  const ARTEN = ['orbital', 'hu'];
   const wenigBewegung = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const anteil = (t, a, b) => Math.min(1, Math.max(0, (t - a) / (b - a)));
   const sanft = (x) => x * x * (3 - 2 * x);
@@ -709,7 +710,8 @@ const Finisher = (() => {
   }
 
   // ---------- Szenen ----------
-  // Jede Szene: dauer (dann kommt das Banner), toene [[zeit, name]], vibration [[zeit, muster]],
+  // Jede Szene: dauer (dann kommt das Banner), toene [[zeit, name, bis?]] (bis = Tonende für Töne mit Länge),
+  // vibration [[zeit, muster]], dehnung [[von, bis, faktor]] (ruhige Abschnitte langsamer abspielen),
   // vorbereiten(d) → Zusatzdaten, zeichne(c, w, h, t, d) gibt optional eine Wackel-Stärke zurück.
   const SZENEN = {
     // Orbitalschlag als Mini-Film: virtuelle Kamera fährt durch eine „Welt“ (Raumschiff oben, Erde weit darunter).
@@ -717,8 +719,9 @@ const Finisher = (() => {
     // Kamera folgt dem Strahl → Einschlag in Zeitlupe → Rückzoom, Schiff springt in den Hyperraum.
     orbital: {
       dauer: 7.8,
-      toene: [[0.1, 'ladenLang'], [1.6, 'whoosh'], [2.75, 'lockon'], [3.5, 'whoosh'], [4.2, 'laser'], [4.7, 'whoosh'], [5.2, 'explosion'], [5.3, 'nachhall'], [7.45, 'hyperraum']],
+      toene: [[0.1, 'ladenLang', 4.1], [1.6, 'whoosh'], [2.75, 'lockon'], [3.5, 'whoosh'], [4.2, 'laser'], [4.7, 'whoosh'], [5.2, 'explosion'], [5.3, 'nachhall'], [7.45, 'hyperraum']],
       vibration: [[4.2, [30]], [5.2, [120, 50, 200]]],
+      dehnung: [[0.3, 1.6, 1.5], [2.1, 3.5, 1.7], [5.5, 6.3, 1.6], [6.3, 7.4, 1.5], [7.5, 7.8, 2.5]],
       gewinnText: (v) => `Orbitalschlag auf ${v} ausgeführt 🛸`,
       verlierText: 'Du wurdest aus dem Orbit erledigt 😵',
       vorbereiten: (d) => {
@@ -1086,6 +1089,7 @@ const Finisher = (() => {
       toene: [[0, 'rolltor'], [0.5, 'stottern'], [2.2, 'falsch'], [2.65, 'falsch'], [3.1, 'falsch'], [3.55, 'falsch'], [4.3, 'hydraulik'],
         [5.0, 'scheppern'], [5.32, 'klack'], [5.5, 'whoosh'], [5.85, 'stempel'], [7.3, 'whoosh'], [7.7, 'stempel'], [7.75, 'pling'], [9.5, 'rolltor']],
       vibration: [[5.85, [90]]],
+      dehnung: [[0.8, 1.8, 1.4], [1.8, 3.85, 1.5], [3.85, 4.2, 3], [5.9, 6.8, 1.5], [6.8, 7.3, 1.4], [7.9, 9.0, 1.8]],
       gewinnText: (v) => `${v}: erhebliche Mängel – keine Plakette 🚫`,
       verlierText: 'Erhebliche Mängel – keine Plakette für dich 🚫',
       vorbereiten: (d) => {
@@ -1146,9 +1150,24 @@ const Finisher = (() => {
           c.textBaseline = 'alphabetic';
           c.font = `900 ${Math.round(f * 1.1)}px ${SCHRIFT}`;
           c.fillText('PRÜFBERICHT · HU', bx + bw * 0.1, by + bh * 0.17);
-          c.font = `600 ${Math.round(f * 0.8)}px ${SCHRIFT}`;
           c.fillStyle = '#374151';
-          c.fillText('Fahrzeug von: ' + kurz(d.verlierer.join(' & ')), bx + bw * 0.1, by + bh * 0.24);
+          if (n > 1) {
+            // Zwei Halter: eigene Zeile, fett und so groß wie es passt, damit beide Namen gut lesbar sind
+            c.font = `600 ${Math.round(f * 0.65)}px ${SCHRIFT}`;
+            c.fillText('Fahrzeuge von:', bx + bw * 0.1, by + bh * 0.215);
+            const namen = d.verlierer.map(kurz).join(' & ');
+            let fn = Math.round(f * 0.95);
+            c.font = `800 ${fn}px ${SCHRIFT}`;
+            while (fn > 9 && c.measureText(namen).width > bw * 0.8) {
+              fn--;
+              c.font = `800 ${fn}px ${SCHRIFT}`;
+            }
+            c.fillStyle = '#111827';
+            c.fillText(namen, bx + bw * 0.1, by + bh * 0.275);
+          } else {
+            c.font = `600 ${Math.round(f * 0.8)}px ${SCHRIFT}`;
+            c.fillText('Fahrzeug von: ' + kurz(d.verlierer[0]), bx + bw * 0.1, by + bh * 0.24);
+          }
           d.maengel.forEach((m, i) => {
             const ab = 2.2 + i * 0.45;
             if (t < ab) return;
@@ -1716,6 +1735,19 @@ const Finisher = (() => {
   function zeigen(daten, optionen = {}) {
     const art = daten.verlierer.length === 0 ? 'doppelko' : optionen.art || ARTEN[streuung(daten.id || '') % ARTEN.length];
     const szene = SZENEN[art];
+    // Zeitdehnung: echte Zeit ↔ Szenenzeit (Abschnitte sortiert, ohne Überlappung)
+    const dehnung = szene.dehnung || [];
+    const echtZeit = (s) => dehnung.reduce((e, [von, bis, f]) => e + (Math.min(Math.max(s, von), bis) - von) * (f - 1), s);
+    const szenenZeit = (e) => {
+      let versatz = 0;
+      for (const [von, bis, f] of dehnung) {
+        const a = von + versatz;
+        if (e < a) break;
+        if (e < a + (bis - von) * f) return von + (e - a) / f;
+        versatz += (bis - von) * (f - 1);
+      }
+      return e - versatz;
+    };
     const d = { ...daten, alle: [...daten.gewinner, ...daten.verlierer], ...szene.vorbereiten(daten) };
     const verlierer = daten.verlierer.join(' & ');
     let titel;
@@ -1777,8 +1809,8 @@ const Finisher = (() => {
       let start = performance.now();
       let weg = false;
       let schliessenUm = null;
-      const ausstehend = szene.toene.map(([zeit, name]) => ({ zeit, name }));
-      const vibrationen = szene.vibration.map(([zeit, muster]) => ({ zeit, muster }));
+      const ausstehend = szene.toene.map(([zeit, name, bis]) => ({ zeit: echtZeit(zeit), name, lang: bis && echtZeit(bis) - echtZeit(zeit) }));
+      const vibrationen = szene.vibration.map(([zeit, muster]) => ({ zeit: echtZeit(zeit), muster }));
       const schliessen = () => {
         if (weg) return;
         weg = true;
@@ -1803,18 +1835,22 @@ const Finisher = (() => {
           // überspringen: noch ausstehende Töne verwerfen, direkt zum Schlussbild
           ausstehend.length = 0;
           vibrationen.length = 0;
-          start = performance.now() - szene.dauer * 1000 - 1500;
+          start = performance.now() - echtZeit(szene.dauer) * 1000 - 1500;
         } else schliessen();
       });
       const schritt = (jetzt) => {
         if (weg) return;
-        const t = (jetzt - start) / 1000;
-        while (ausstehend.length && ausstehend[0].zeit <= t) Ton.spiel(ausstehend.shift().name);
-        while (vibrationen.length && vibrationen[0].zeit <= t) Ton.vibrieren(vibrationen.shift().muster);
+        const echt = (jetzt - start) / 1000;
+        const t = szenenZeit(echt);
+        while (ausstehend.length && ausstehend[0].zeit <= echt) {
+          const ton = ausstehend.shift();
+          Ton.spiel(ton.name, 0, ton.lang);
+        }
+        while (vibrationen.length && vibrationen[0].zeit <= echt) Ton.vibrieren(vibrationen.shift().muster);
         bild(t);
         if (t >= szene.dauer) {
           bannerZeigen();
-          if (schliessenUm == null) schliessenUm = jetzt + 4000;
+          if (schliessenUm == null) schliessenUm = jetzt + 6000;
         }
         if (schliessenUm != null && jetzt > schliessenUm) return schliessen();
         requestAnimationFrame(schritt);
