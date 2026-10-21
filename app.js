@@ -375,11 +375,22 @@ function beschriftenMarkieren(pruefung) {
   });
 }
 
-// Beschriften-Fragen bekommen pro weiterem Feld 10 s mehr Zeit
-const zeitFuer = (sekunden, frage) =>
-  sekunden && frage && frage.typ === 'beschriften' ? sekunden + 10 * Math.max(0, frage.antworten.length - 1) : sekunden;
+// Lesezeit für lange Fragen: ab 250 Zeichen (Frage + Antworten) 1 s je 18 Zeichen, in 5-s-Schritten, höchstens 90 s.
+// Hängt nur vom Text ab – im Live-Battle bekommen alle Geräte dieselbe Zeit.
+function lesezeit(frage) {
+  if (!frage) return 0;
+  const zeichen = frage.frage.length + (frage.typ === 'auswahl' || !frage.typ ? summe(frage.antworten.map((a) => a.length)) : 0);
+  return Math.min(90, Math.round(Math.max(0, zeichen - 250) / 18 / 5) * 5);
+}
 
-const typHinweis = (frage) => (!frage ? '' : frage.typ === 'eingabe' ? ' · ✎ eintippen' : frage.typ === 'beschriften' ? ' · ✎ beschriften' : '');
+// Zeit pro Frage: Grundzeit + Lesezeit, Beschriften-Fragen zusätzlich 10 s pro weiterem Feld
+const zeitFuer = (sekunden, frage) =>
+  !sekunden || !frage ? sekunden
+    : sekunden + lesezeit(frage) + (frage.typ === 'beschriften' ? 10 * Math.max(0, frage.antworten.length - 1) : 0);
+
+const typHinweis = (frage) =>
+  (!frage ? '' : frage.typ === 'eingabe' ? ' · ✎ eintippen' : frage.typ === 'beschriften' ? ' · ✎ beschriften' : '');
+const zeitHinweis = (sekunden, frage) => (sekunden && lesezeit(frage) ? ` · ⏱ +${lesezeit(frage)} s Lesezeit` : '');
 
 function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
   clearInterval(frageTimer);
@@ -406,7 +417,7 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
   const optionen = eingabe || beschriften ? [] : shuffle(frage.antworten);
   sekunden = zeitFuer(sekunden, frage);
   show(`
-    <div class="frage-kopf"><span>${esc(titel)}</span><span>${esc(info)}${typHinweis(frage)}</span></div>
+    <div class="frage-kopf"><span>${esc(titel)}</span><span>${esc(info)}${typHinweis(frage)}${zeitHinweis(sekunden, frage)}</span></div>
     ${sekunden ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage.frage)}</div>
     ${bildPlatz(frage.bild)}
@@ -1612,7 +1623,7 @@ function liveFrage(live) {
   live.gewaehlt = null;
   show(`
     ${liveKopf(duell)}
-    <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}${typHinweis(frage)}</span></div>
+    <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}${typHinweis(frage)}${zeitHinweis(liveDauer(duell), frage)}</span></div>
     ${liveDauer(duell) ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</div>
     ${frage ? bildPlatz(frage.bild) : ''}
