@@ -479,36 +479,84 @@ const Finisher = (() => {
     c.restore();
   }
 
-  // Echte HU-Plakette: Farbe nach Jahr der nächsten HU (Zyklus ab 2025: orange, blau, gelb, braun, rosa, grün),
-  // Monatszahlen 1–12 im Kreis – der Fälligkeitsmonat steht oben, in der Mitte das Jahr zweistellig
-  const PLAKETTEN_FARBEN = ['#f59e42', '#5b9bf0', '#f7d23e', '#b8875a', '#f5a9cf', '#6fd38a'];
+  // HU-Prüfplakette nach Anlage IX StVZO: Farbe nach Durchführungsjahr (RAL-Töne, Zyklus ab 2008: blau, gelb, braun,
+  // rosa, grün, orange), Monatszahlen 1–12 entgegen dem Uhrzeigersinn, nach außen gedreht, mit Strichen über und
+  // unter jeder Zahl; im 60°-Abschnitt 11–12–1 schwarze Felder, bei 12 geteilt; Jahr zweistellig im Mittelkreis.
+  // Die ganze Plakette ist so gedreht, dass der Durchführungsmonat oben steht.
+  const PLAKETTEN_FARBEN = ['#2271b3', '#d7b12e', '#8f4e35', '#e1a6ad', '#57a639', '#ed760e']; // RAL 5015, 1012, 8004, 3015, 6018, 2000
   function huPlakette(c, x, y, r, jahr, monat) {
-    const farbe = PLAKETTEN_FARBEN[(((jahr - 2025) % 6) + 6) % 6];
+    const farbe = PLAKETTEN_FARBEN[(((jahr - 2008) % 6) + 6) % 6];
+    const strich = r * 0.045;
+    const winkelVon = (m) => -Math.PI / 2 - ((m - 12) * Math.PI) / 6; // ungedreht: 12 oben, 1 links daneben
     c.save();
     c.translate(x, y);
+    c.rotate(((monat - 12) * Math.PI) / 6);
     c.fillStyle = farbe;
     c.beginPath();
     c.arc(0, 0, r, 0, Math.PI * 2);
     c.fill();
-    c.strokeStyle = 'rgba(0,0,0,0.45)';
-    c.lineWidth = r * 0.04;
-    c.stroke();
     c.fillStyle = '#111';
+    // Schwarze Felder im Abschnitt 11–12–1 (außen am Rand und innen am Mittelkreis), bei 12 durch einen Strich geteilt
+    const feld = (r1, r2, halb) => {
+      c.beginPath();
+      c.arc(0, 0, r2, -Math.PI / 2 - halb, -Math.PI / 2 + halb);
+      c.arc(0, 0, r1, -Math.PI / 2 + halb, -Math.PI / 2 - halb, true);
+      c.closePath();
+      c.fill();
+    };
+    feld(r * 0.8, r * 0.97, Math.PI / 6);
+    feld(r * 0.31, r * 0.45, Math.PI / 8);
+    c.strokeStyle = farbe;
+    c.lineWidth = strich * 0.8;
+    c.beginPath();
+    c.moveTo(0, -r * 0.3);
+    c.lineTo(0, -r * 0.46);
+    c.moveTo(0, -r * 0.79);
+    c.lineTo(0, -r * 0.98);
+    c.stroke();
+    // Striche über und unter den Zahlen
+    c.strokeStyle = '#111';
+    c.lineWidth = strich;
+    c.lineCap = 'butt';
+    for (let m = 1; m <= 12; m++) {
+      if (m === 12) continue;
+      const w = winkelVon(m);
+      const [cx, cy] = [Math.cos(w), Math.sin(w)];
+      c.beginPath();
+      c.moveTo(cx * r * 0.3, cy * r * 0.3);
+      c.lineTo(cx * r * 0.46, cy * r * 0.46);
+      c.moveTo(cx * r * 0.79, cy * r * 0.79);
+      c.lineTo(cx * r * 0.97, cy * r * 0.97);
+      c.stroke();
+    }
+    // Monatszahlen (DIN-1451-Optik: einstellig Mittelschrift, zweistellig Engschrift), Oberkante nach außen
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    c.font = `800 ${r * 0.24}px ${SCHRIFT}`;
     for (let m = 1; m <= 12; m++) {
-      const winkel = ((m - monat) / 12) * Math.PI * 2 - Math.PI / 2;
-      c.fillText(String(m), Math.cos(winkel) * r * 0.76, Math.sin(winkel) * r * 0.76);
+      const w = winkelVon(m);
+      c.save();
+      c.translate(Math.cos(w) * r * 0.625, Math.sin(w) * r * 0.625);
+      c.rotate(w + Math.PI / 2);
+      c.scale(m > 9 ? 0.62 : 0.8, 1);
+      c.font = `700 ${r * 0.27}px "DIN 1451", "Arial Narrow", ${SCHRIFT}`;
+      c.fillText(String(m), 0, r * 0.01);
+      c.restore();
     }
-    // Markierung über dem Fälligkeitsmonat
+    // Mittelkreis mit Jahr (Engschrift)
+    c.lineWidth = strich;
     c.beginPath();
-    c.moveTo(-r * 0.12, -r * 0.98);
-    c.lineTo(r * 0.12, -r * 0.98);
-    c.lineTo(0, -r * 0.88);
-    c.fill();
-    c.font = `900 ${r * 0.62}px ${SCHRIFT}`;
-    c.fillText(String(jahr % 100).padStart(2, '0'), 0, r * 0.05);
+    c.arc(0, 0, r * 0.3, 0, Math.PI * 2);
+    c.stroke();
+    c.save();
+    c.scale(0.68, 1);
+    c.font = `700 ${r * 0.36}px "DIN 1451", "Arial Narrow", ${SCHRIFT}`;
+    c.fillText(String(jahr % 100).padStart(2, '0'), 0, r * 0.02);
+    c.restore();
+    // Umrandung
+    c.lineWidth = r * 0.05;
+    c.beginPath();
+    c.arc(0, 0, r * 0.975, 0, Math.PI * 2);
+    c.stroke();
     c.restore();
   }
 
@@ -1775,5 +1823,5 @@ const Finisher = (() => {
     });
   }
 
-  return { zeigen, ARTEN };
+  return { zeigen, ARTEN, huPlakette };
 })();
