@@ -470,6 +470,36 @@ textarea {
   40%, 80% { transform: translateX(8px) rotate(1deg); }
 }
 
+/* Finisher am Duell-Ende (gezeichnet in effekte.js) */
+.finisher { position: fixed; inset: 0; z-index: 45; background: #050816; cursor: pointer; transition: opacity 0.3s; }
+.finisher.aus { opacity: 0; }
+.finisher canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.finisher-banner {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 460px);
+  padding: 18px 16px;
+  border: 2px solid #facc15;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: finisher-banner 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.finisher-titel { font-size: clamp(1.5rem, 7vw, 2.2rem); font-weight: 900; overflow-wrap: anywhere; }
+.finisher-unter { margin-top: 6px; font-size: 1.05rem; font-weight: 600; color: #fde68a; }
+.finisher-hinweis { margin-top: 10px; font-size: 0.8rem; opacity: 0.7; }
+.finisher-ueberspringen { position: absolute; bottom: 16px; width: 100%; text-align: center; font-size: 0.85rem; color: rgba(255, 255, 255, 0.75); text-shadow: 0 1px 4px #000; }
+.finisher-banner[hidden], .finisher-ueberspringen[hidden] { display: none; }
+@keyframes finisher-banner { from { transform: translate(-50%, -50%) scale(0.4); opacity: 0; } }
+
+.ton-knopf { font-size: 1.1rem; line-height: 1; }
+.effekt-knoepfe { display: flex; flex-wrap: wrap; gap: 6px; }
+.effekt-knoepfe .btn { width: auto; }
+
 /* Serien-Flamme */
 .serie {
   display: inline-block;

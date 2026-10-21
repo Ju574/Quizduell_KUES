@@ -493,6 +493,8 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
     if (beschriften) pruefung && beschriftenMarkieren(pruefung);
     else if (eingabe) app.querySelector('#eingabe').classList.add(richtig ? 'richtig' : 'falsch');
     else markieren(optionen, gewaehlt, loesung && loesung.richtig);
+    Ton.spiel(richtig ? 'richtig' : 'falsch');
+    if (richtig && serieVorher + 1 >= 3) Ton.spiel('serie', 0.25);
     const gespeichert = Promise.resolve(beiAntwort(richtig));
     const treffer = beschriften && pruefung ? pruefung.felder.filter((f) => f.ok).length : 0;
     const text = gewaehlt == null ? '⏱ Zeit abgelaufen'
@@ -606,6 +608,11 @@ function vsIntro(duell) {
   el.className = 'vs-intro' + (wenigBewegung() ? ' ruhig' : '');
   el.innerHTML = `<div class="vs-buehne">${namen.join('<div class="vs-wort">VS</div>')}<div class="vs-info">${info}</div></div>`;
   document.body.appendChild(el);
+  // Töne passend zu den CSS-Animationen: Namen fliegen rein (Whoosh), „VS“ knallt (Gong)
+  Ton.spiel('whoosh');
+  Ton.spiel('whoosh', 0.25);
+  Ton.spiel('gong', 0.6);
+  if (namen.length > 2) Ton.spiel('whoosh', 0.6);
   return new Promise((fertig) => {
     let weg = false;
     const schliessen = () => {
@@ -666,10 +673,19 @@ function konfetti(dauer = 2500, anzahl = 160) {
   requestAnimationFrame(schritt);
 }
 
-// Sieg: Konfetti + Jubel · Unentschieden: etwas Konfetti · Niederlage: Wackeln – einmal pro Duell
-function ergebnisEffekt(duell, element) {
+// Erst der Finisher (effekte.js), danach Sieg: Konfetti + Jubel · Unentschieden: etwas Konfetti · Niederlage: Wackeln.
+// Einmal pro Duell und Gerät.
+async function ergebnisEffekt(duell, element) {
   if (!element || !erstesMal('pruefi-jubel-' + duell.id)) return;
-  const e = duellErgebnis(duell).ergebnis[ich.id];
+  const { ergebnis } = duellErgebnis(duell);
+  const spieler = teilnehmer(duell);
+  await Finisher.zeigen({
+    id: duell.id,
+    gewinner: spieler.filter((s) => ergebnis[s] !== 'n').map(nameVon),
+    verlierer: spieler.filter((s) => ergebnis[s] === 'n').map(nameVon),
+    ichGewonnen: ergebnis[ich.id] !== 'n',
+  });
+  const e = ergebnis[ich.id];
   if (e === 's') {
     konfetti();
     element.classList.add('jubel');
@@ -843,7 +859,12 @@ function abmelden() {
 
 function topbarAktualisieren() {
   const el = document.getElementById('topbar-rechts');
-  el.innerHTML = ich ? `<span class="topbar-name">${esc(ich.name)}</span><button class="link" id="abmelden">Abmelden</button>` : '';
+  const tonKnopf = () => `<button class="link ton-knopf" id="ton" title="Ton an/aus" aria-label="Ton ${Ton.an ? 'aus' : 'an'}schalten">${Ton.an ? '🔊' : '🔇'}</button>`;
+  el.innerHTML = tonKnopf() + (ich ? `<span class="topbar-name">${esc(ich.name)}</span><button class="link" id="abmelden">Abmelden</button>` : '');
+  el.querySelector('#ton').onclick = () => {
+    if (Ton.umschalten()) setTimeout(() => Ton.spiel('pling'), 50); // kurz bestätigen, dass Ton an ist
+    topbarAktualisieren();
+  };
   if (ich) el.querySelector('#abmelden').onclick = abmelden;
 }
 
@@ -1449,7 +1470,13 @@ function liveTick(live) {
   if (jetzt < d.start) {
     einmal(live, 'pause' + i, () => livePause(live));
     const el = app.querySelector('#countdown');
-    if (el) el.textContent = Math.ceil((d.start - jetzt) / 1000);
+    const rest = Math.ceil((d.start - jetzt) / 1000);
+    if (el) el.textContent = rest;
+    // Piepen bei 3, 2, 1 – je Sekunde nur einmal
+    if (rest <= 3 && live.piep !== i + ':' + rest) {
+      live.piep = i + ':' + rest;
+      Ton.spiel('piep');
+    }
     return;
   }
 
@@ -1470,6 +1497,7 @@ function liveTick(live) {
     sperren(-1);
     const m = app.querySelector('#meine-meldung');
     if (m) m.innerHTML = '<span class="nok">⏱ Zeit abgelaufen</span>';
+    Ton.spiel('falsch');
     const phase = live.phase;
     loesungenLaden([d.fragen[i]])
       .then(([l]) => {
@@ -1696,6 +1724,7 @@ function liveFrage(live) {
     app.querySelector('#meine-meldung').textContent = 'Bereits beantwortet – warte auf die anderen.';
     return;
   }
+  if (Date.now() - d.start < 1500) Ton.spiel('los'); // nicht nach Neuladen mitten in der Frage
   if (!frage) {
     // Frage wurde inzwischen aus der Datenbank entfernt – zählt für niemanden, sonst hinge das Battle ohne Zeitlimit fest
     live.gewaehlt = -1;
@@ -1741,6 +1770,8 @@ async function liveAntworten(live, frage, auswahl) {
       else if (eingabe) app.querySelector('#eingabe').classList.add(richtig ? 'richtig' : 'falsch');
       else markieren(live.optionen, auswahl, loesung && loesung.richtig);
       const serie = richtig ? serieAusAntworten(d.antworten[ich.id].slice(0, i).filter(Boolean)) + 1 : 0;
+      Ton.spiel(richtig ? 'richtig' : 'falsch');
+      if (serie >= 3) Ton.spiel('serie', 0.25);
       app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span> ${serieText(serie)}` : '<span class="nok">✗ Leider falsch</span>';
     }
     lernstandBuchen(frage.id, richtig);
@@ -2018,6 +2049,10 @@ async function rangliste(filter = 'alle') {
 }
 
 // ===== Admin =====
+const FINISHER_NAMEN = [
+  ['orbital', '🛸 Orbitalschlag'], ['hu', '🚫 HU verweigert'], ['blitzer', '📸 Geblitzt'],
+  ['abschlepp', '🚛 Abgeschleppt'], ['motor', '💥 Motorschaden'], ['doppelko', '💫 Doppel-K.O.'],
+];
 // Eigenes Admin-Passwort, nur für diese Browser-Sitzung gemerkt
 async function adminAnsicht() {
   const adminPw = gespeichertSitzung('pruefi-admin');
@@ -2053,6 +2088,15 @@ async function adminAnsicht() {
   show(`
     <h2>Admin</h2>
     <a class="btn primaer" href="#/admin/fragen">🗂 Alle Fragen durchsehen</a>
+    <h3>🎬 Effekte testen</h3>
+    <div class="karte stapel">
+      <div class="klein gedaempft">Finisher</div>
+      <div class="effekt-knoepfe">${FINISHER_NAMEN.map(([art, name]) => `<button class="btn klein" data-finisher="${art}">${name}</button>`).join('')}</div>
+      <label class="check"><input type="checkbox" id="fin-verloren"> aus Sicht des Verlierers</label>
+      <label class="check"><input type="checkbox" id="fin-drei"> mit 3 Spielern</label>
+      <div class="klein gedaempft">Sounds${Ton.an ? '' : ' – der Ton ist aus, oben mit 🔇 einschalten'}</div>
+      <div class="effekt-knoepfe">${Ton.liste.map(([n, name]) => `<button class="btn klein" data-sound="${n}">${esc(name)}</button>`).join('')}<button class="btn klein" id="vs-test">⚔️ VS-Intro</button></div>
+    </div>
     <h3>Gemeldete Fragen (${offen.length} offen)</h3>
     ${offen.length ? '<button class="btn" id="meldungen-kopieren">📋 Offene Meldungen für Claude kopieren</button>' : ''}
     <div class="liste">${meldungen.map(meldungZeile).join('') || '<p class="leer">Keine Meldungen.</p>'}</div>
@@ -2131,6 +2175,31 @@ async function adminAnsicht() {
     } catch {
       prompt('Text kopieren:', text);
     }
+  });
+  // Effekte testen
+  app.querySelectorAll('[data-finisher]').forEach((b) => {
+    b.onclick = () => {
+      const art = b.dataset.finisher;
+      const ichName = ich ? ich.name : 'Du';
+      const andere = app.querySelector('#fin-drei').checked ? ['Gegner 1', 'Gegner 2'] : ['Gegner 1'];
+      const verloren = app.querySelector('#fin-verloren').checked;
+      const daten =
+        art === 'doppelko' ? { gewinner: [ichName, ...andere], verlierer: [], ichGewonnen: true }
+        : verloren ? { gewinner: [andere[0]], verlierer: [ichName, ...andere.slice(1)], ichGewonnen: false }
+        : { gewinner: [ichName], verlierer: andere, ichGewonnen: true };
+      Finisher.zeigen({ id: 'test', ...daten }, { art: art === 'doppelko' ? undefined : art }).catch(fehler);
+    };
+  });
+  app.querySelectorAll('[data-sound]').forEach((b) => {
+    b.onclick = () => (Ton.an ? Ton.spiel(b.dataset.sound) : toast('Der Ton ist aus – oben mit 🔇 einschalten.'));
+  });
+  on('#vs-test', () => {
+    const id = 'vs-test-' + Date.now();
+    const namen = [ich ? ich.name : 'Du', 'Gegner 1', ...(app.querySelector('#fin-drei').checked ? ['Gegner 2'] : [])];
+    vsIntro({ id, modus: 'live', spieler1: namen[0], spieler2: namen[1], spieler3: namen[2], daten: { fragen: [1, 2, 3, 4, 5] } })
+      .finally(() => {
+        try { localStorage.removeItem('pruefi-intro-' + id); } catch {}
+      });
   });
   on('#admin-ende', () => {
     try { sessionStorage.removeItem('pruefi-admin'); } catch {}
