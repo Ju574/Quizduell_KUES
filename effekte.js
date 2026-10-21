@@ -103,6 +103,18 @@ const Ton = (() => {
       rauschen(t, 2.5, { von: 400, bis: 40, laut: 0.5 });
       ton(45, t, 2.5, { bis: 25, laut: 0.4, anschlag: 0.05 });
     },
+    rolltor: (t) => {
+      for (let k = 0; k < 14; k++) rauschen(t + k * 0.05, 0.04, { filter: 'bandpass', von: 900, bis: 700, q: 3, laut: 0.25 });
+    },
+    hydraulik: (t) => ton(70, t, 0.8, { typ: 'sawtooth', bis: 110, laut: 0.12, anschlag: 0.1 }),
+    scheppern: (t) => {
+      for (let k = 0; k < 4; k++) ton(600 + Math.random() * 900, t + k * 0.06, 0.18, { typ: 'square', laut: 0.08 });
+      rauschen(t, 0.3, { filter: 'highpass', von: 2000, bis: 5000, laut: 0.35 });
+    },
+    klack: (t) => {
+      rauschen(t, 0.05, { filter: 'highpass', von: 3000, bis: 4000, laut: 0.5 });
+      ton(700, t, 0.06, { typ: 'square', laut: 0.12 });
+    },
     hyperraum: (t) => {
       ton(200, t, 0.6, { typ: 'sawtooth', bis: 3000, laut: 0.1 });
       rauschen(t, 0.6, { filter: 'bandpass', von: 500, bis: 6000, q: 1.2, laut: 0.4 });
@@ -158,7 +170,7 @@ const Ton = (() => {
   // Für den Admin-Bereich „Effekte testen“
   const LISTE = [
     ['whoosh', 'Whoosh (VS)'], ['gong', 'Gong (VS)'], ['piep', 'Countdown-Piep'], ['los', 'Los!'], ['richtig', 'Richtig'], ['falsch', 'Falsch'],
-    ['serie', 'Serien-Flamme'], ['laden', 'Laser laden'], ['ladenLang', 'Laser laden (lang)'], ['lockon', 'Ziel erfasst'], ['laser', 'Laser'], ['nachhall', 'Nachhall'], ['hyperraum', 'Hyperraum'], ['explosion', 'Explosion'], ['stempel', 'Stempel'], ['pling', 'Plakette'],
+    ['serie', 'Serien-Flamme'], ['laden', 'Laser laden'], ['ladenLang', 'Laser laden (lang)'], ['lockon', 'Ziel erfasst'], ['laser', 'Laser'], ['nachhall', 'Nachhall'], ['hyperraum', 'Hyperraum'], ['rolltor', 'Rolltor'], ['hydraulik', 'Hebebühne'], ['scheppern', 'Scheppern'], ['klack', 'Klack'], ['explosion', 'Explosion'], ['stempel', 'Stempel'], ['pling', 'Plakette'],
     ['blitz', 'Blitzer'], ['papier', 'Papier'], ['hupe', 'Hupe'], ['stottern', 'Motor stottert'], ['knall', 'Knall'], ['fanfare', 'Sieger-Fanfare'],
     ['wahwah', 'Verlierer-Wah-wah'],
   ];
@@ -344,6 +356,127 @@ const Finisher = (() => {
     c.fillStyle = farbe;
     c.fillRect(0, 0, w, h);
     c.globalAlpha = 1;
+  }
+
+  // ---------- Film-Werkzeuge (für die Mini-Filme) ----------
+  const UEBERGANG = { linear: (x) => x, sanft, raus, rein: (x) => x * x };
+  const zw = (a, b, x) => a + (b - a) * x;
+
+  // Kamerafahrt aus Abschnitten [von, bis, [x, y, k], [x, y, k], übergang?]. Ein neuer Abschnitt, der woanders
+  // anfängt als der vorige aufgehört hat, wirkt wie ein harter Schnitt.
+  function kamerafahrt(abschnitte) {
+    return (t) => {
+      let a = abschnitte[0];
+      for (const s of abschnitte) if (t >= s[0]) a = s;
+      const x = UEBERGANG[a[4] || 'sanft'](anteil(t, a[0], a[1]));
+      return { x: zw(a[2][0], a[3][0], x), y: zw(a[2][1], a[3][1], x), k: zw(a[2][2], a[3][2], x) };
+    };
+  }
+
+  // Welt zeichnen: Kamera (x, y, k) bezogen auf den Grundzoom b; gibt die Umrechnung Welt → Bildschirm zurück
+  function inWelt(c, w, h, kam, b, zeichnen) {
+    const z = kam.k * b;
+    c.save();
+    c.translate(w / 2, h / 2);
+    c.scale(z, z);
+    c.translate(-kam.x, -kam.y);
+    zeichnen(z);
+    c.restore();
+    return (x, y) => [w / 2 + (x - kam.x) * z, h / 2 + (y - kam.y) * z];
+  }
+  const grundzoom = (w, h) => Math.min(w, h * 0.8) / 600;
+
+  function kinobalken(c, w, h, t, dauer) {
+    const hoehe = h * 0.1 * (t < dauer ? Math.min(1, t / 0.3) : 1 - anteil(t, dauer, dauer + 0.5));
+    if (hoehe > 0) {
+      c.fillStyle = '#000';
+      c.fillRect(0, 0, w, hoehe);
+      c.fillRect(0, h - hoehe, w, hoehe);
+    }
+  }
+
+  function untertitel(c, w, h, t, text, von, bis, farbe = '#fde047') {
+    if (t < von || t > bis) return;
+    c.save();
+    c.globalAlpha = Math.min(anteil(t, von, von + 0.25), 1 - anteil(t, bis - 0.25, bis));
+    let groesse = Math.round(Math.min(20, w / 18));
+    c.font = `800 ${groesse}px ${SCHRIFT}`;
+    while (groesse > 10 && c.measureText(text).width > w - 36) {
+      groesse--;
+      c.font = `800 ${groesse}px ${SCHRIFT}`;
+    }
+    c.textAlign = 'left';
+    c.textBaseline = 'alphabetic';
+    c.shadowColor = '#000';
+    c.shadowBlur = 6;
+    c.fillStyle = farbe;
+    c.fillText(text, 18, h - h * 0.1 - 22);
+    c.restore();
+  }
+
+  // Figur (Weltmaß ca. 60 hoch), Füße bei (x, y); gesicht = Emoji
+  function figur(c, x, y, farbe, gesicht, { dreh = 0, gross = 1, laufen = 0, tuete = false } = {}) {
+    c.save();
+    c.translate(x, y);
+    c.rotate(dreh);
+    c.scale(gross, gross);
+    const bein = Math.sin(laufen * 18) * 6 * (laufen ? 1 : 0);
+    c.fillStyle = '#1f2937';
+    c.fillRect(-9 + bein, -6, 7, 8);
+    c.fillRect(2 - bein, -6, 7, 8);
+    c.fillStyle = farbe;
+    c.beginPath();
+    c.roundRect(-11, -34, 22, 30, 7);
+    c.fill();
+    if (tuete) {
+      c.fillStyle = '#d6a36a';
+      c.fillRect(10, -26, 14, 18);
+      c.fillStyle = '#22c55e';
+      c.beginPath();
+      c.arc(15, -27, 4, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.font = `26px ${SCHRIFT}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(gesicht, 0, -46);
+    c.restore();
+  }
+
+  // Rauch: Liste von Wölkchen { start, dx, r } – alter in Sekunden ab start
+  function rauch(c, wolken, t, x, y, { farbe = '#6b7280', steigen = 120, dichte = 0.5, leben = 2 } = {}) {
+    for (const p of wolken) {
+      const alter = t - p.start;
+      if (alter < 0 || alter > leben) continue;
+      c.globalAlpha = dichte * (1 - alter / leben);
+      c.fillStyle = farbe;
+      c.beginPath();
+      c.arc(x + p.dx * (0.3 + alter), y - alter * steigen, p.r * (1 + alter * 0.8), 0, Math.PI * 2);
+      c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  const wolkenListe = (n, von, abstand) => Array.from({ length: n }, (_, i) => ({ start: von + i * abstand, dx: (Math.random() - 0.5) * 60, r: 10 + Math.random() * 14 }));
+
+  // Text in Weltkoordinaten (z. B. Schilder an der Wand)
+  function schild(c, text, x, y, { groesse = 28, farbe = '#fff', hinter = '#1e3a8a', rand = null } = {}) {
+    c.save();
+    c.font = `900 ${groesse}px ${SCHRIFT}`;
+    const b = c.measureText(text).width + groesse;
+    c.fillStyle = hinter;
+    c.beginPath();
+    c.roundRect(x - b / 2, y - groesse * 0.85, b, groesse * 1.7, groesse * 0.3);
+    c.fill();
+    if (rand) {
+      c.strokeStyle = rand;
+      c.lineWidth = 4;
+      c.stroke();
+    }
+    c.fillStyle = farbe;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(text, x, y + 1);
+    c.restore();
   }
 
   // ---------- Szenen ----------
@@ -716,86 +849,320 @@ const Finisher = (() => {
       },
     },
 
+    // HU verweigert als Mini-Film: Rolltor auf, Verlierer-Auto rollt qualmend rein → Nahaufnahme Prüfbericht
+    // (Mängel mit Buzzer) → Hebebühne, Auspuff fällt ab → Riesenstempel in Zeitlupe → Gewinner bekommt die
+    // Plakette (Nahaufnahme) → Verlierer wird rausgeschoben, Rolltor zu.
     hu: {
-      dauer: 3.6,
-      toene: [[0, 'whoosh'], [1.6, 'stempel'], [2.1, 'whoosh'], [3.0, 'pling']],
-      vibration: [[1.6, [70]]],
+      dauer: 9.3,
+      toene: [[0, 'rolltor'], [0.5, 'stottern'], [2.2, 'falsch'], [2.65, 'falsch'], [3.1, 'falsch'], [3.55, 'falsch'], [4.3, 'hydraulik'],
+        [5.0, 'scheppern'], [5.32, 'klack'], [5.5, 'whoosh'], [5.85, 'stempel'], [7.0, 'whoosh'], [7.7, 'pling'], [8.8, 'rolltor']],
+      vibration: [[5.85, [90]]],
       gewinnText: (v) => `${v}: erhebliche Mängel – keine Plakette 🚫`,
       verlierText: 'Erhebliche Mängel – keine Plakette für dich 🚫',
-      vorbereiten: () => ({ funken: teileErzeugen(40, 120, ['#fde047', '#fff', '#22c55e']) }),
+      vorbereiten: (d) => {
+        const pool = ['Längsträger durchgerostet', 'Bremsscheiben verschlissen', 'Spurstangenkopf ausgeschlagen', 'Auspuff mit Panzertape fixiert',
+          'Reifenprofil 0,8 mm', 'Scheinwerfer: ein Auge blind', 'Ölverlust – Ölsee unterm Fahrzeug', 'Lenkungsspiel gefühlt 90°',
+          'Bremsflüssigkeit: Apfelschorle', 'Hupe macht nur noch „Mööp“'];
+        for (let i = pool.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        return { maengel: pool.slice(0, 4), qualm: wolkenListe(30, 0.4, 0.06), staub: teileErzeugen(70, 260, ['#a8a29e', '#d6d3d1', '#78716c']) };
+      },
       zeichne(c, w, h, t, d) {
-        const wand = c.createLinearGradient(0, 0, 0, h);
-        wand.addColorStop(0, '#334155');
-        wand.addColorStop(0.55, '#475569');
-        wand.addColorStop(0.56, '#64748b');
-        wand.addColorStop(1, '#334155');
-        c.fillStyle = wand;
-        c.fillRect(0, 0, w, h);
-        c.fillStyle = '#facc15';
-        for (let x = -40; x < w + 40; x += 60) c.fillRect(x, h * 0.86, 30, 8);
-        namensschild(c, '🔧 HU-Prüfstraße', w / 2, h * 0.1, { hinter: '#1e3a8a', farbe: '#fff', groesse: 18 });
-        const s = Math.min(w * 0.36, 170);
         const n = d.verlierer.length;
-        const vx = w * 0.27 - (1 - raus(anteil(t, 0, 1.0))) * w * 0.7;
-        const zeilen = n === 1 ? [h * 0.62] : [h * 0.48, h * 0.78];
-        d.verlierer.forEach((name, i) => {
-          auto(c, vx, zeilen[i], s, i ? '#f97316' : '#dc2626');
-          namensschild(c, kurz(name), vx, zeilen[i] - s * 0.62);
-        });
-        // Stempel
-        const st = anteil(t, 1.3, 1.6);
-        if (st > 0) {
-          const mitte = n === 1 ? zeilen[0] - s * 0.25 : (zeilen[0] + zeilen[1]) / 2 - s * 0.25;
-          const skala = 3 - 2 * sanft(st);
-          c.save();
-          c.translate(w * 0.27, mitte);
-          c.rotate(-0.2);
-          c.scale(skala, skala);
-          c.globalAlpha = st;
-          const sb = Math.min(w * 0.46, 220);
-          c.strokeStyle = '#dc2626';
-          c.lineWidth = 6;
-          c.fillStyle = 'rgba(254,226,226,0.88)';
+        const b = grundzoom(w, h);
+        const X2 = -400; // zweites Verlierer-Auto wartet hier
+        const kamera = kamerafahrt([
+          [0, 1.8, [-700, -180, 0.75], [-170, -170, 1.0]],
+          [4.2, 5.4, [0, -210, 1.15], [0, -240, 1.35]],
+          [5.4, 6.8, [n > 1 ? -200 : 0, -250, n > 1 ? 0.72 : 1.0], [n > 1 ? -200 : 0, -250, n > 1 ? 0.78 : 1.08]],
+          [6.8, 7.6, [600, -150, 1.2], [480, -75, 3.0], 'raus'],
+          [7.6, 8.3, [480, -75, 3.0], [480, -75, 3.1]],
+          [8.3, 9.3, [-300, -200, 0.7], [-420, -200, 0.75]],
+        ]);
+        const kam = kamera(t);
+        const S = 260; // Autobreite in Welt-Einheiten
+        const tor = t < 4 ? 1 - sanft(anteil(t, 0, 0.7)) : sanft(anteil(t, 8.8, 9.3)); // 1 = Rolltor zu
+        const buehne = t < 8 ? -150 * sanft(anteil(t, 4.3, 5.0)) : -150 * (1 - sanft(anteil(t, 8.0, 8.3)));
+        const x1 = t < 8.3 ? -1150 + 1150 * raus(anteil(t, 0.4, 1.8)) : -1500 * sanft(anteil(t, 8.3, 9.1));
+        const x2 = t < 8.3 ? -1450 + (1450 + X2) * raus(anteil(t, 0.6, 2.0)) : X2 - 1100 * sanft(anteil(t, 8.35, 9.2));
+        const autos = [{ x: x1, y: buehne, farbe: '#dc2626', name: d.verlierer[0] }];
+        if (n > 1) autos.push({ x: x2, y: 0, farbe: '#f97316', name: d.verlierer[1] });
+        const stempelAb = (x) => (t < 5.5 ? -1400 : t < 5.85 ? zw(-1400, x, Math.pow(anteil(t, 5.5, 5.85), 2)) : t < 6.3 ? x : zw(x, -1400, sanft(anteil(t, 6.3, 6.7))));
+
+        // ---------- Prüfbericht in Nahaufnahme (eigene Einstellung, Bildschirm-Ebene) ----------
+        if (t >= 1.8 && t < 4.2) {
+          const hg = c.createRadialGradient(w / 2, h / 2, 10, w / 2, h / 2, Math.max(w, h) * 0.7);
+          hg.addColorStop(0, '#57534e');
+          hg.addColorStop(1, '#1c1917');
+          c.fillStyle = hg;
+          c.fillRect(0, 0, w, h);
+          const zoom = 1 + 0.08 * anteil(t, 1.8, 4.2);
+          const bw = Math.min(w * 0.94, 560, h * 0.62) * zoom;
+          const bh = bw * 1.3;
+          const bx = w / 2 - bw / 2;
+          const by = h / 2 - bh / 2;
+          c.fillStyle = '#92400e';
           c.beginPath();
-          c.roundRect(-sb / 2, -34, sb, 68, 10);
+          c.roundRect(bx, by, bw, bh, 14);
           c.fill();
+          c.fillStyle = '#f8fafc';
+          c.fillRect(bx + bw * 0.06, by + bh * 0.07, bw * 0.88, bh * 0.89);
+          c.fillStyle = '#9ca3af';
+          c.beginPath();
+          c.roundRect(bx + bw * 0.3, by - bh * 0.015, bw * 0.4, bh * 0.07, 8);
+          c.fill();
+          const f = bw / 15;
+          c.fillStyle = '#111827';
+          c.textAlign = 'left';
+          c.textBaseline = 'alphabetic';
+          c.font = `900 ${Math.round(f * 1.1)}px ${SCHRIFT}`;
+          c.fillText('PRÜFBERICHT · HU', bx + bw * 0.1, by + bh * 0.17);
+          c.font = `600 ${Math.round(f * 0.8)}px ${SCHRIFT}`;
+          c.fillStyle = '#374151';
+          c.fillText('Fahrzeug von: ' + kurz(d.verlierer.join(' & ')), bx + bw * 0.1, by + bh * 0.24);
+          d.maengel.forEach((m, i) => {
+            const ab = 2.2 + i * 0.45;
+            if (t < ab) return;
+            const y = by + bh * (0.36 + i * 0.12);
+            c.globalAlpha = anteil(t, ab, ab + 0.15);
+            c.fillStyle = '#111827';
+            let fg = Math.round(f * 0.8);
+            c.font = `600 ${fg}px ${SCHRIFT}`;
+            while (fg > 9 && c.measureText(m).width > bw * 0.68) {
+              fg--;
+              c.font = `600 ${fg}px ${SCHRIFT}`;
+            }
+            c.fillText(m, bx + bw * 0.1, y);
+            const s = 1 + 1.5 * (1 - sanft(anteil(t, ab, ab + 0.2)));
+            c.save();
+            c.translate(bx + bw * 0.86, y - f * 0.3);
+            c.scale(s, s);
+            c.font = `${Math.round(f * 0.9)}px ${SCHRIFT}`;
+            c.textAlign = 'center';
+            c.fillText('❌', 0, f * 0.3);
+            c.restore();
+            c.globalAlpha = 1;
+          });
+          if (t > 3.85) {
+            c.save();
+            c.translate(bx + bw * 0.5, by + bh * 0.88);
+            c.rotate(-0.12);
+            c.globalAlpha = anteil(t, 3.85, 4.0);
+            const ergebnis = 'Ergebnis: ERHEBLICHE MÄNGEL';
+            let fe = Math.round(f * 0.85);
+            c.font = `900 ${fe}px ${SCHRIFT}`;
+            while (fe > 9 && c.measureText(ergebnis).width > bw * 0.66) {
+              fe--;
+              c.font = `900 ${fe}px ${SCHRIFT}`;
+            }
+            const breite = c.measureText(ergebnis).width + fe;
+            c.strokeStyle = '#dc2626';
+            c.lineWidth = 4;
+            c.strokeRect(-breite / 2, -fe * 1.05, breite, fe * 1.9);
+            c.fillStyle = '#dc2626';
+            c.textAlign = 'center';
+            c.fillText(ergebnis, 0, fe * 0.35);
+            c.restore();
+          }
+          kinobalken(c, w, h, t, this.dauer);
+          return 0;
+        }
+
+        // ---------- Prüfhalle (Welt) ----------
+        const nachStempel = t >= 5.85;
+        const wackeln = t > 5.85 && t < 6.2 ? 14 * (1 - anteil(t, 5.85, 6.2)) : t > 5.0 && t < 5.2 ? 4 : 0;
+        const bild = inWelt(c, w, h, kam, b, () => {
+          c.fillStyle = '#0f172a';
+          c.fillRect(-2000, -1600, 4000, 3200);
+          // Wand mit Paneelen
+          c.fillStyle = '#3f4b5c';
+          c.fillRect(-1300, -560, 2600, 560);
+          c.strokeStyle = 'rgba(15,23,42,0.35)';
+          c.lineWidth = 3;
+          for (let y = -500; y < 0; y += 70) {
+            c.beginPath();
+            c.moveTo(-1300, y);
+            c.lineTo(1300, y);
+            c.stroke();
+          }
+          // Deckenlampen mit Lichtkegel
+          for (let x = -900; x <= 900; x += 360) {
+            c.fillStyle = 'rgba(254,249,195,0.07)';
+            c.beginPath();
+            c.moveTo(x - 40, -530);
+            c.lineTo(x + 40, -530);
+            c.lineTo(x + 220, 0);
+            c.lineTo(x - 220, 0);
+            c.fill();
+            c.fillStyle = '#fef9c3';
+            c.fillRect(x - 50, -545, 100, 14);
+          }
+          // Spot auf den Gewinner
+          if (t > 6.8) {
+            c.fillStyle = `rgba(254,240,138,${0.22 * anteil(t, 6.8, 7.1)})`;
+            c.beginPath();
+            c.moveTo(560, -530);
+            c.lineTo(640, -530);
+            c.lineTo(790, 0);
+            c.lineTo(410, 0);
+            c.fill();
+          }
+          schild(c, '🔧 HU-Prüfstraße', 0, -420, { groesse: 30 });
+          // Rolltor links
+          c.fillStyle = '#1e293b';
+          c.fillRect(-880, -310, 260, 310);
+          c.fillStyle = '#94a3b8';
+          const unten = -300 + 300 * tor;
+          c.fillRect(-880, -310, 260, unten + 310);
+          c.strokeStyle = '#64748b';
+          for (let y = -300; y < unten; y += 22) {
+            c.beginPath();
+            c.moveTo(-880, y);
+            c.lineTo(-620, y);
+            c.stroke();
+          }
+          // Boden
+          c.fillStyle = '#273241';
+          c.fillRect(-1300, 0, 2600, 600);
+          c.fillStyle = '#facc15';
+          for (let x = -1300; x < 1300; x += 110) c.fillRect(x, 50, 60, 10);
+          // Hebebühne (Schere)
+          c.strokeStyle = '#ef4444';
+          c.lineWidth = 10;
+          c.beginPath();
+          c.moveTo(-110, 0);
+          c.lineTo(110, buehne + 4);
+          c.moveTo(110, 0);
+          c.lineTo(-110, buehne + 4);
           c.stroke();
           c.fillStyle = '#b91c1c';
-          c.textAlign = 'center';
-          c.font = `900 ${Math.round(sb / 11)}px ${SCHRIFT}`;
-          c.fillText('ERHEBLICHE MÄNGEL', 0, -6);
-          c.font = `900 ${Math.round(sb / 13)}px ${SCHRIFT}`;
-          c.fillText('KEINE PLAKETTE', 0, 20);
-          c.restore();
+          c.fillRect(-160, buehne, 320, 14);
+          // Gewinner-Auto in der Nachbarspur, glänzend
+          auto(c, 600, 0, S, '#16a34a');
+          if (t > 7.7) {
+            const p = anteil(t, 7.7, 7.9);
+            const r = 18 * (1 + 2.5 * (1 - sanft(p)));
+            c.globalAlpha = p;
+            c.fillStyle = '#2563eb';
+            c.beginPath();
+            c.arc(486, -64, r, 0, Math.PI * 2);
+            c.fill();
+            c.fillStyle = '#fde047';
+            c.beginPath();
+            c.arc(486, -64, r * 0.72, 0, Math.PI * 2);
+            c.fill();
+            c.fillStyle = '#1e3a8a';
+            c.font = `900 ${Math.round(r * 0.75)}px ${SCHRIFT}`;
+            c.textAlign = 'center';
+            c.textBaseline = 'middle';
+            c.fillText('28', 486, -63);
+            c.globalAlpha = 1;
+            // Glanz-Streifen über die Plakette
+            if (t > 7.85 && t < 8.25) {
+              const gx = zw(440, 530, anteil(t, 7.85, 8.25));
+              c.fillStyle = 'rgba(255,255,255,0.75)';
+              c.beginPath();
+              c.moveTo(gx, -90);
+              c.lineTo(gx + 10, -90);
+              c.lineTo(gx - 6, -38);
+              c.lineTo(gx - 16, -38);
+              c.fill();
+            }
+          }
+          // Verlierer-Autos (qualmend), Auspuff fällt ab
+          for (const [i, a] of autos.entries()) {
+            if (t < 2.2) rauch(c, d.qualm, t, a.x - S * 0.55, a.y - 20, { farbe: '#94a3b8', steigen: 60, dichte: 0.45 });
+            auto(c, a.x, a.y, S, a.farbe);
+            if (i === 0) {
+              let ax = a.x - S * 0.42;
+              let ay = a.y - 12;
+              let dreh = 0;
+              if (t > 5.0) {
+                const f = Math.min(t - 5.0, 0.32);
+                ay = Math.min(-6, a.y - 12 + 1500 * f * f);
+                dreh = Math.min(0.5, (t - 5.0) * 3);
+                if (t > 5.32) ay = -6;
+              }
+              c.save();
+              c.translate(ax, ay);
+              c.rotate(dreh);
+              c.fillStyle = '#475569';
+              c.fillRect(-36, -5, 60, 10);
+              c.fillStyle = '#9ca3af';
+              c.fillRect(-20, -6, 10, 12);
+              c.restore();
+            }
+            if (nachStempel) {
+              c.save();
+              c.translate(a.x, a.y - S * 0.32);
+              c.rotate(-0.18);
+              c.strokeStyle = 'rgba(220,38,38,0.92)';
+              c.lineWidth = 8;
+              c.fillStyle = 'rgba(254,226,226,0.72)';
+              c.beginPath();
+              c.roundRect(-150, -46, 300, 92, 12);
+              c.fill();
+              c.stroke();
+              c.fillStyle = '#b91c1c';
+              c.textAlign = 'center';
+              c.textBaseline = 'middle';
+              c.font = `900 26px ${SCHRIFT}`;
+              c.fillText('ERHEBLICHE MÄNGEL', 0, -14);
+              c.font = `900 22px ${SCHRIFT}`;
+              c.fillText('KEINE PLAKETTE', 0, 18);
+              c.restore();
+            }
+            // Riesenstempel
+            const sy = stempelAb(a.y - S * 0.58);
+            if (t > 5.5 && t < 6.7) {
+              const quetsch = t > 5.85 && t < 6.3 ? 0.88 : 1;
+              c.save();
+              c.translate(a.x, sy);
+              c.scale(1, quetsch);
+              c.fillStyle = '#7c2d12';
+              c.fillRect(-26, -330, 52, 220);
+              c.beginPath();
+              c.arc(0, -340, 46, 0, Math.PI * 2);
+              c.fill();
+              c.fillStyle = '#6b7280';
+              c.fillRect(-170, -120, 340, 90);
+              c.fillStyle = '#b91c1c';
+              c.fillRect(-160, -30, 320, 30);
+              c.restore();
+            }
+            if (nachStempel && t < 7.2) {
+              const tau = (t - 5.85) * 0.5;
+              for (const p of d.staub) {
+                const al = Math.max(0, 1 - tau / 0.6);
+                c.globalAlpha = al * 0.8;
+                c.fillStyle = p.farbe;
+                c.beginPath();
+                c.arc(a.x + p.vx * tau, a.y - 40 + Math.abs(p.vy) * tau * -0.3, p.r * 2 * (1 + tau * 2), 0, Math.PI * 2);
+                c.fill();
+              }
+              c.globalAlpha = 1;
+            }
+          }
+        });
+
+        // ---------- Bildschirm-Ebene ----------
+        autos.forEach((a) => {
+          if (t < 4.2 || t > 8.2) return;
+          const [sx, sy] = bild(a.x, a.y - S * 0.62);
+          if (t < 5.5) namensschild(c, kurz(a.name), sx, sy);
+        });
+        if (t > 6.8 && t < 7.4) {
+          const [sx, sy] = bild(600, -S * 0.62);
+          namensschild(c, '🏆 ' + kurz(d.gewinner.join(' & ')), sx, sy, { hinter: 'rgba(250,204,21,0.95)' });
         }
-        // Gewinner fährt vor und bekommt die Plakette
-        const gx = w * 0.74 + (1 - raus(anteil(t, 2.0, 2.8))) * w * 0.7;
-        const gy = h * 0.62;
-        auto(c, gx, gy, s, '#16a34a');
-        namensschild(c, '🏆 ' + kurz(d.gewinner.join(' & ')), gx, gy - s * 0.62, { hinter: 'rgba(250,204,21,0.95)' });
-        const pl = anteil(t, 2.8, 3.1);
-        if (pl > 0) {
-          const pr = s * 0.13 * (1 + 3 * (1 - sanft(pl)));
-          const px = gx + s * 0.2;
-          const py = gy - s * 0.2;
-          c.globalAlpha = pl;
-          c.fillStyle = '#16a34a';
-          c.beginPath();
-          c.arc(px, py, pr, 0, Math.PI * 2);
-          c.fill();
-          c.fillStyle = '#fde047';
-          c.beginPath();
-          c.arc(px, py, pr * 0.72, 0, Math.PI * 2);
-          c.fill();
-          c.fillStyle = '#14532d';
-          c.font = `900 ${Math.round(pr * 0.8)}px ${SCHRIFT}`;
-          c.textAlign = 'center';
-          c.textBaseline = 'middle';
-          c.fillText('✓', px, py + 1);
-          c.globalAlpha = 1;
-          if (t > 3.0) explosion(c, d.funken, t - 3.0, px, py);
-        }
-        return t > 1.6 && t < 1.9 ? 8 : 0;
+        untertitel(c, w, h, t, '🔧 Hauptuntersuchung – Fahrzeug von ' + kurz(d.verlierer.join(' & ')), 0.3, 1.8);
+        untertitel(c, w, h, t, '⬆️ Unterbodenprüfung …', 4.3, 5.4);
+        untertitel(c, w, h, t, '✅ ' + kurz(d.gewinner.join(' & ')) + ': ohne Mängel – Plakette erteilt', 6.9, 8.3);
+        blitzlicht(c, w, h, t, 5.85, 0.2, '#fff', 0.5);
+        kinobalken(c, w, h, t, this.dauer);
+        return wackeln;
       },
     },
 
