@@ -479,6 +479,187 @@ const Finisher = (() => {
     c.restore();
   }
 
+  // Echte HU-Plakette: Farbe nach Jahr der nächsten HU (Zyklus ab 2025: orange, blau, gelb, braun, rosa, grün),
+  // Monatszahlen 1–12 im Kreis – der Fälligkeitsmonat steht oben, in der Mitte das Jahr zweistellig
+  const PLAKETTEN_FARBEN = ['#f59e42', '#5b9bf0', '#f7d23e', '#b8875a', '#f5a9cf', '#6fd38a'];
+  function huPlakette(c, x, y, r, jahr, monat) {
+    const farbe = PLAKETTEN_FARBEN[(((jahr - 2025) % 6) + 6) % 6];
+    c.save();
+    c.translate(x, y);
+    c.fillStyle = farbe;
+    c.beginPath();
+    c.arc(0, 0, r, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = 'rgba(0,0,0,0.45)';
+    c.lineWidth = r * 0.04;
+    c.stroke();
+    c.fillStyle = '#111';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.font = `800 ${r * 0.24}px ${SCHRIFT}`;
+    for (let m = 1; m <= 12; m++) {
+      const winkel = ((m - monat) / 12) * Math.PI * 2 - Math.PI / 2;
+      c.fillText(String(m), Math.cos(winkel) * r * 0.76, Math.sin(winkel) * r * 0.76);
+    }
+    // Markierung über dem Fälligkeitsmonat
+    c.beginPath();
+    c.moveTo(-r * 0.12, -r * 0.98);
+    c.lineTo(r * 0.12, -r * 0.98);
+    c.lineTo(0, -r * 0.88);
+    c.fill();
+    c.font = `900 ${r * 0.62}px ${SCHRIFT}`;
+    c.fillText(String(jahr % 100).padStart(2, '0'), 0, r * 0.05);
+    c.restore();
+  }
+
+  // Siegel der Zulassungsstelle (Stempelplakette) – allgemein gehalten, kein echtes Landeswappen
+  function siegel(c, x, y, r) {
+    c.save();
+    c.translate(x, y);
+    c.fillStyle = '#f1f5f9';
+    c.beginPath();
+    c.arc(0, 0, r, 0, Math.PI * 2);
+    c.fill();
+    c.strokeStyle = '#64748b';
+    c.lineWidth = r * 0.12;
+    c.beginPath();
+    c.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+    c.stroke();
+    c.fillStyle = '#b91c1c';
+    c.beginPath();
+    c.moveTo(-r * 0.38, -r * 0.4);
+    c.lineTo(r * 0.38, -r * 0.4);
+    c.lineTo(r * 0.38, r * 0.05);
+    c.quadraticCurveTo(r * 0.38, r * 0.45, 0, r * 0.55);
+    c.quadraticCurveTo(-r * 0.38, r * 0.45, -r * 0.38, r * 0.05);
+    c.closePath();
+    c.fill();
+    c.fillStyle = '#fff';
+    c.fillRect(-r * 0.06, -r * 0.35, r * 0.12, r * 0.8);
+    c.restore();
+  }
+
+  // Heckansicht eines Autos mit Kennzeichen [EU-Feld D] [HU-Plakette + Siegel] [NAME]; Mitte (0, 0), Breite 600.
+  // Kennzeichen-Mitte liegt bei (0, KENNZEICHEN_Y). plakette: 0 = noch nicht da, 1 = aufgeklebt
+  const KENNZEICHEN_Y = 18;
+  function heckansicht(c, farbe, name, t, plakette, jahr, monat) {
+    c.fillStyle = 'rgba(0,0,0,0.35)';
+    c.beginPath();
+    c.ellipse(0, 175, 330, 22, 0, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = '#111827';
+    c.beginPath();
+    c.roundRect(-285, 110, 80, 62, 10);
+    c.roundRect(205, 110, 80, 62, 10);
+    c.fill();
+    c.fillStyle = farbe;
+    c.beginPath();
+    c.moveTo(-250, -130);
+    c.lineTo(-185, -280);
+    c.lineTo(185, -280);
+    c.lineTo(250, -130);
+    c.closePath();
+    c.fill();
+    c.fillStyle = 'rgba(147,197,253,0.9)';
+    c.beginPath();
+    c.moveTo(-215, -145);
+    c.lineTo(-165, -262);
+    c.lineTo(165, -262);
+    c.lineTo(215, -145);
+    c.closePath();
+    c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.35)';
+    c.beginPath();
+    c.moveTo(-120, -262);
+    c.lineTo(-60, -262);
+    c.lineTo(-130, -145);
+    c.lineTo(-190, -145);
+    c.closePath();
+    c.fill();
+    c.fillStyle = farbe;
+    c.beginPath();
+    c.roundRect(-305, -140, 610, 260, 40);
+    c.fill();
+    c.fillStyle = 'rgba(0,0,0,0.12)';
+    c.fillRect(-305, 40, 610, 80);
+    for (const s of [-1, 1]) {
+      const glut = c.createRadialGradient(s * 255, -85, 5, s * 255, -85, 70);
+      glut.addColorStop(0, 'rgba(248,113,113,0.6)');
+      glut.addColorStop(1, 'rgba(248,113,113,0)');
+      c.fillStyle = glut;
+      c.fillRect(s * 255 - 70, -155, 140, 140);
+      c.fillStyle = '#dc2626';
+      c.beginPath();
+      c.roundRect(s > 0 ? 200 : -295, -110, 95, 50, 12);
+      c.fill();
+      c.fillStyle = '#fecaca';
+      c.fillRect(s > 0 ? 215 : -280, -100, 30, 10);
+    }
+    c.fillStyle = '#374151';
+    c.beginPath();
+    c.roundRect(-315, 80, 630, 45, 14);
+    c.fill();
+    c.fillStyle = '#9ca3af';
+    c.beginPath();
+    c.roundRect(170, 118, 46, 16, 8);
+    c.fill();
+
+    // Kennzeichen 340 × 74
+    c.save();
+    c.translate(-170, KENNZEICHEN_Y - 37);
+    c.fillStyle = '#fff';
+    c.strokeStyle = '#111';
+    c.lineWidth = 3;
+    c.beginPath();
+    c.roundRect(0, 0, 340, 74, 7);
+    c.fill();
+    c.stroke();
+    c.fillStyle = '#003399';
+    c.beginPath();
+    c.roundRect(1.5, 1.5, 40, 71, [6, 0, 0, 6]);
+    c.fill();
+    c.fillStyle = '#ffcc00';
+    for (let k = 0; k < 12; k++) {
+      const winkel = (k / 12) * Math.PI * 2;
+      c.beginPath();
+      c.arc(21.5 + Math.cos(winkel) * 10, 24 + Math.sin(winkel) * 10, 1.6, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.fillStyle = '#fff';
+    c.font = `800 22px ${SCHRIFT}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('D', 21.5, 55);
+    // Plakettenfeld: HU-Plakette oben, Siegel unten
+    siegel(c, 66, 53, 13);
+    if (plakette > 0) {
+      const s = 1 + 2.2 * (1 - sanft(plakette));
+      c.save();
+      c.globalAlpha = Math.min(1, plakette * 1.5);
+      c.translate(66, 21);
+      c.scale(s, s);
+      huPlakette(c, 0, 0, 15.5, jahr, monat);
+      c.restore();
+    }
+    // Name in FE-Schrift-Optik (schmal, fett, Großbuchstaben)
+    const text = name.toUpperCase();
+    let groesse = 56;
+    c.font = `800 ${groesse}px "Arial Narrow", ${SCHRIFT}`;
+    while (groesse > 16 && c.measureText(text).width * 0.82 > 238) {
+      groesse -= 2;
+      c.font = `800 ${groesse}px "Arial Narrow", ${SCHRIFT}`;
+    }
+    c.save();
+    c.translate(215, 39);
+    c.scale(0.82, 1);
+    c.fillStyle = '#111';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(text, 0, 2);
+    c.restore();
+    c.restore();
+  }
+
   // ---------- Szenen ----------
   // Jede Szene: dauer (dann kommt das Banner), toene [[zeit, name]], vibration [[zeit, muster]],
   // vorbereiten(d) → Zusatzdaten, zeichne(c, w, h, t, d) gibt optional eine Wackel-Stärke zurück.
@@ -853,9 +1034,9 @@ const Finisher = (() => {
     // (Mängel mit Buzzer) → Hebebühne, Auspuff fällt ab → Riesenstempel in Zeitlupe → Gewinner bekommt die
     // Plakette (Nahaufnahme) → Verlierer wird rausgeschoben, Rolltor zu.
     hu: {
-      dauer: 9.3,
+      dauer: 10.0,
       toene: [[0, 'rolltor'], [0.5, 'stottern'], [2.2, 'falsch'], [2.65, 'falsch'], [3.1, 'falsch'], [3.55, 'falsch'], [4.3, 'hydraulik'],
-        [5.0, 'scheppern'], [5.32, 'klack'], [5.5, 'whoosh'], [5.85, 'stempel'], [7.0, 'whoosh'], [7.7, 'pling'], [8.8, 'rolltor']],
+        [5.0, 'scheppern'], [5.32, 'klack'], [5.5, 'whoosh'], [5.85, 'stempel'], [7.3, 'whoosh'], [7.7, 'stempel'], [7.75, 'pling'], [9.5, 'rolltor']],
       vibration: [[5.85, [90]]],
       gewinnText: (v) => `${v}: erhebliche Mängel – keine Plakette 🚫`,
       verlierText: 'Erhebliche Mängel – keine Plakette für dich 🚫',
@@ -877,16 +1058,14 @@ const Finisher = (() => {
           [0, 1.8, [-700, -180, 0.75], [-170, -170, 1.0]],
           [4.2, 5.4, [0, -210, 1.15], [0, -240, 1.35]],
           [5.4, 6.8, [n > 1 ? -200 : 0, -250, n > 1 ? 0.72 : 1.0], [n > 1 ? -200 : 0, -250, n > 1 ? 0.78 : 1.08]],
-          [6.8, 7.6, [600, -150, 1.2], [480, -75, 3.0], 'raus'],
-          [7.6, 8.3, [480, -75, 3.0], [480, -75, 3.1]],
-          [8.3, 9.3, [-300, -200, 0.7], [-420, -200, 0.75]],
+          [9.0, 10.0, [-300, -200, 0.7], [-420, -200, 0.75]],
         ]);
         const kam = kamera(t);
         const S = 260; // Autobreite in Welt-Einheiten
-        const tor = t < 4 ? 1 - sanft(anteil(t, 0, 0.7)) : sanft(anteil(t, 8.8, 9.3)); // 1 = Rolltor zu
-        const buehne = t < 8 ? -150 * sanft(anteil(t, 4.3, 5.0)) : -150 * (1 - sanft(anteil(t, 8.0, 8.3)));
-        const x1 = t < 8.3 ? -1150 + 1150 * raus(anteil(t, 0.4, 1.8)) : -1500 * sanft(anteil(t, 8.3, 9.1));
-        const x2 = t < 8.3 ? -1450 + (1450 + X2) * raus(anteil(t, 0.6, 2.0)) : X2 - 1100 * sanft(anteil(t, 8.35, 9.2));
+        const tor = t < 4 ? 1 - sanft(anteil(t, 0, 0.7)) : sanft(anteil(t, 9.5, 10.0)); // 1 = Rolltor zu
+        const buehne = t < 8.7 ? -150 * sanft(anteil(t, 4.3, 5.0)) : -150 * (1 - sanft(anteil(t, 8.7, 9.0)));
+        const x1 = t < 9.0 ? -1150 + 1150 * raus(anteil(t, 0.4, 1.8)) : -1500 * sanft(anteil(t, 9.0, 9.8));
+        const x2 = t < 9.0 ? -1450 + (1450 + X2) * raus(anteil(t, 0.6, 2.0)) : X2 - 1100 * sanft(anteil(t, 9.05, 9.9));
         const autos = [{ x: x1, y: buehne, farbe: '#dc2626', name: d.verlierer[0] }];
         if (n > 1) autos.push({ x: x2, y: 0, farbe: '#f97316', name: d.verlierer[1] });
         const stempelAb = (x) => (t < 5.5 ? -1400 : t < 5.85 ? zw(-1400, x, Math.pow(anteil(t, 5.5, 5.85), 2)) : t < 6.3 ? x : zw(x, -1400, sanft(anteil(t, 6.3, 6.7))));
@@ -970,6 +1149,64 @@ const Finisher = (() => {
           return 0;
         }
 
+        // ---------- Gewinner von hinten: Kennzeichen mit Plakette (eigene Einstellung) ----------
+        if (t >= 6.8 && t < 9.0) {
+          const hg = c.createRadialGradient(w / 2, h * 0.35, 20, w / 2, h * 0.5, Math.max(w, h) * 0.8);
+          hg.addColorStop(0, '#64748b');
+          hg.addColorStop(1, '#0f172a');
+          c.fillStyle = hg;
+          c.fillRect(0, 0, w, h);
+          c.fillStyle = '#273241';
+          c.fillRect(0, h * 0.62, w, h);
+          const jetzt = new Date();
+          const jahr = jetzt.getFullYear() + 2;
+          const monat = jetzt.getMonth() + 1;
+          // Kamera: ganzes Heck → Plakettenfeld groß → ganzes Kennzeichen
+          const ganz = Math.min(w * 0.82, h * 0.9) / 640;
+          const feld = Math.min(w, h) * 0.55 / 40;
+          const schild = Math.min(w * 0.94, 900) / 350;
+          const plakX = -170 + 66;
+          const plakY = KENNZEICHEN_Y - 37 + 21;
+          let zoom;
+          let fx;
+          let fy;
+          if (t < 7.3) {
+            const x = sanft(anteil(t, 6.8, 7.3));
+            zoom = zw(ganz, ganz * 1.15, x);
+            fx = 0;
+            fy = zw(-40, -20, x);
+          } else if (t < 8.3) {
+            const x = raus(anteil(t, 7.3, 7.6));
+            zoom = zw(ganz * 1.15, feld, x);
+            fx = zw(0, plakX, x);
+            fy = zw(-20, plakY + 10, x);
+          } else {
+            const x = sanft(anteil(t, 8.3, 8.9));
+            zoom = zw(feld, schild, x);
+            fx = zw(plakX, 0, x);
+            fy = zw(plakY + 10, KENNZEICHEN_Y, x);
+          }
+          c.save();
+          c.translate(w / 2, h * 0.52);
+          c.scale(zoom, zoom);
+          c.translate(-fx, -fy);
+          heckansicht(c, '#16a34a', d.gewinner.join(' & '), t, anteil(t, 7.7, 7.85), jahr, monat);
+          if (t > 7.9 && t < 8.35) {
+            const gx = plakX + zw(-22, 22, anteil(t, 7.9, 8.35));
+            c.fillStyle = 'rgba(255,255,255,0.7)';
+            c.beginPath();
+            c.moveTo(gx - 3, plakY - 16);
+            c.lineTo(gx + 3, plakY - 16);
+            c.lineTo(gx - 3, plakY + 16);
+            c.lineTo(gx - 9, plakY + 16);
+            c.fill();
+          }
+          c.restore();
+          untertitel(c, w, h, t, '🏆 ' + kurz(d.gewinner.join(' & ')) + ': ohne Mängel – Plakette erteilt', 6.9, 9.0);
+          kinobalken(c, w, h, t, this.dauer);
+          return t > 7.7 && t < 7.85 ? 6 : 0;
+        }
+
         // ---------- Prüfhalle (Welt) ----------
         const nachStempel = t >= 5.85;
         const wackeln = t > 5.85 && t < 6.2 ? 14 * (1 - anteil(t, 5.85, 6.2)) : t > 5.0 && t < 5.2 ? 4 : 0;
@@ -1041,36 +1278,6 @@ const Finisher = (() => {
           c.fillRect(-160, buehne, 320, 14);
           // Gewinner-Auto in der Nachbarspur, glänzend
           auto(c, 600, 0, S, '#16a34a');
-          if (t > 7.7) {
-            const p = anteil(t, 7.7, 7.9);
-            const r = 18 * (1 + 2.5 * (1 - sanft(p)));
-            c.globalAlpha = p;
-            c.fillStyle = '#2563eb';
-            c.beginPath();
-            c.arc(486, -64, r, 0, Math.PI * 2);
-            c.fill();
-            c.fillStyle = '#fde047';
-            c.beginPath();
-            c.arc(486, -64, r * 0.72, 0, Math.PI * 2);
-            c.fill();
-            c.fillStyle = '#1e3a8a';
-            c.font = `900 ${Math.round(r * 0.75)}px ${SCHRIFT}`;
-            c.textAlign = 'center';
-            c.textBaseline = 'middle';
-            c.fillText('28', 486, -63);
-            c.globalAlpha = 1;
-            // Glanz-Streifen über die Plakette
-            if (t > 7.85 && t < 8.25) {
-              const gx = zw(440, 530, anteil(t, 7.85, 8.25));
-              c.fillStyle = 'rgba(255,255,255,0.75)';
-              c.beginPath();
-              c.moveTo(gx, -90);
-              c.lineTo(gx + 10, -90);
-              c.lineTo(gx - 6, -38);
-              c.lineTo(gx - 16, -38);
-              c.fill();
-            }
-          }
           // Verlierer-Autos (qualmend), Auspuff fällt ab
           for (const [i, a] of autos.entries()) {
             if (t < 2.2) rauch(c, d.qualm, t, a.x - S * 0.55, a.y - 20, { farbe: '#94a3b8', steigen: 60, dichte: 0.45 });
@@ -1153,13 +1360,8 @@ const Finisher = (() => {
           const [sx, sy] = bild(a.x, a.y - S * 0.62);
           if (t < 5.5) namensschild(c, kurz(a.name), sx, sy);
         });
-        if (t > 6.8 && t < 7.4) {
-          const [sx, sy] = bild(600, -S * 0.62);
-          namensschild(c, '🏆 ' + kurz(d.gewinner.join(' & ')), sx, sy, { hinter: 'rgba(250,204,21,0.95)' });
-        }
         untertitel(c, w, h, t, '🔧 Hauptuntersuchung – Fahrzeug von ' + kurz(d.verlierer.join(' & ')), 0.3, 1.8);
         untertitel(c, w, h, t, '⬆️ Unterbodenprüfung …', 4.3, 5.4);
-        untertitel(c, w, h, t, '✅ ' + kurz(d.gewinner.join(' & ')) + ': ohne Mängel – Plakette erteilt', 6.9, 8.3);
         blitzlicht(c, w, h, t, 5.85, 0.2, '#fff', 0.5);
         kinobalken(c, w, h, t, this.dauer);
         return wackeln;
