@@ -106,7 +106,7 @@ const Ton = (() => {
     rolltor: (t) => {
       for (let k = 0; k < 14; k++) rauschen(t + k * 0.05, 0.04, { filter: 'bandpass', von: 900, bis: 700, q: 3, laut: 0.25 });
     },
-    hydraulik: (t) => ton(70, t, 0.8, { typ: 'sawtooth', bis: 110, laut: 0.12, anschlag: 0.1 }),
+    hydraulik: (t, lang = 0.8) => ton(70, t, lang, { typ: 'sawtooth', bis: 110, laut: 0.12, anschlag: 0.1 }),
     scheppern: (t) => {
       for (let k = 0; k < 4; k++) ton(600 + Math.random() * 900, t + k * 0.06, 0.18, { typ: 'square', laut: 0.08 });
       rauschen(t, 0.3, { filter: 'highpass', von: 2000, bis: 5000, laut: 0.35 });
@@ -1086,10 +1086,11 @@ const Finisher = (() => {
     // Plakette (Nahaufnahme) → Verlierer wird rausgeschoben, Rolltor zu.
     hu: {
       dauer: 10.0,
-      toene: [[0, 'rolltor'], [0.5, 'stottern'], [2.2, 'falsch'], [2.65, 'falsch'], [3.1, 'falsch'], [3.55, 'falsch'], [4.3, 'hydraulik'],
+      toene: [[0, 'rolltor'], [0.5, 'stottern'], [2.2, 'falsch'], [2.65, 'falsch'], [3.1, 'falsch'], [3.55, 'falsch'], [4.3, 'hydraulik', 5.0],
         [5.0, 'scheppern'], [5.32, 'klack'], [5.5, 'whoosh'], [5.85, 'stempel'], [7.3, 'whoosh'], [7.7, 'stempel'], [7.75, 'pling'], [9.5, 'rolltor']],
       vibration: [[5.85, [90]]],
-      dehnung: [[0.8, 1.8, 1.4], [1.8, 3.85, 1.5], [3.85, 4.2, 3], [5.9, 6.8, 1.5], [6.8, 7.3, 1.4], [7.9, 9.0, 1.8]],
+      dehnung: [[0.8, 1.8, 1.4], [1.8, 3.85, 1.7], [3.85, 4.2, 3], [4.2, 5.0, 1.6], [5.0, 5.32, 2.5], [5.32, 5.4, 5], [5.4, 5.85, 1.5],
+        [5.9, 6.8, 1.5], [6.8, 7.3, 1.4], [7.9, 9.0, 2.0], [9.0, 10.0, 1.4]],
       gewinnText: (v) => `${v}: erhebliche Mängel – keine Plakette 🚫`,
       verlierText: 'Erhebliche Mängel – keine Plakette für dich 🚫',
       vorbereiten: (d) => {
