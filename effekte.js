@@ -91,6 +91,22 @@ const Ton = (() => {
     },
     laden: (t) => ton(150, t, 1.0, { typ: 'sawtooth', bis: 1400, laut: 0.12, anschlag: 0.3 }),
     laser: (t) => ton(1600, t, 0.35, { typ: 'square', bis: 120, laut: 0.18 }),
+    ladenLang: (t) => {
+      ton(110, t, 4.0, { typ: 'sawtooth', bis: 900, laut: 0.07, anschlag: 0.6 });
+      ton(220, t, 4.0, { bis: 1800, laut: 0.04, anschlag: 0.6 });
+    },
+    lockon: (t) => {
+      for (let k = 0; k < 4; k++) ton(1200, t + k * 0.12, 0.06, { typ: 'square', laut: 0.1 });
+      ton(1600, t + 0.5, 0.35, { typ: 'square', laut: 0.12 });
+    },
+    nachhall: (t) => {
+      rauschen(t, 2.5, { von: 400, bis: 40, laut: 0.5 });
+      ton(45, t, 2.5, { bis: 25, laut: 0.4, anschlag: 0.05 });
+    },
+    hyperraum: (t) => {
+      ton(200, t, 0.6, { typ: 'sawtooth', bis: 3000, laut: 0.1 });
+      rauschen(t, 0.6, { filter: 'bandpass', von: 500, bis: 6000, q: 1.2, laut: 0.4 });
+    },
     explosion: (t) => {
       rauschen(t, 1.4, { von: 3000, bis: 60, laut: 0.9 });
       ton(90, t, 0.8, { bis: 30, laut: 0.6, anschlag: 0.005 });
@@ -142,7 +158,7 @@ const Ton = (() => {
   // Für den Admin-Bereich „Effekte testen“
   const LISTE = [
     ['whoosh', 'Whoosh (VS)'], ['gong', 'Gong (VS)'], ['piep', 'Countdown-Piep'], ['los', 'Los!'], ['richtig', 'Richtig'], ['falsch', 'Falsch'],
-    ['serie', 'Serien-Flamme'], ['laden', 'Laser laden'], ['laser', 'Laser'], ['explosion', 'Explosion'], ['stempel', 'Stempel'], ['pling', 'Plakette'],
+    ['serie', 'Serien-Flamme'], ['laden', 'Laser laden'], ['ladenLang', 'Laser laden (lang)'], ['lockon', 'Ziel erfasst'], ['laser', 'Laser'], ['nachhall', 'Nachhall'], ['hyperraum', 'Hyperraum'], ['explosion', 'Explosion'], ['stempel', 'Stempel'], ['pling', 'Plakette'],
     ['blitz', 'Blitzer'], ['papier', 'Papier'], ['hupe', 'Hupe'], ['stottern', 'Motor stottert'], ['knall', 'Knall'], ['fanfare', 'Sieger-Fanfare'],
     ['wahwah', 'Verlierer-Wah-wah'],
   ];
@@ -334,95 +350,369 @@ const Finisher = (() => {
   // Jede Szene: dauer (dann kommt das Banner), toene [[zeit, name]], vibration [[zeit, muster]],
   // vorbereiten(d) → Zusatzdaten, zeichne(c, w, h, t, d) gibt optional eine Wackel-Stärke zurück.
   const SZENEN = {
+    // Orbitalschlag als Mini-Film: virtuelle Kamera fährt durch eine „Welt“ (Raumschiff oben, Erde weit darunter).
+    // Einstellungen: Nahaufnahme Schiff (lädt) → Schwenk zur Erde (Ziel erfasst) → zurück → Feuer →
+    // Kamera folgt dem Strahl → Einschlag in Zeitlupe → Rückzoom, Schiff springt in den Hyperraum.
     orbital: {
-      dauer: 3.3,
-      toene: [[0, 'whoosh'], [1.0, 'laden'], [2.0, 'laser'], [2.3, 'explosion']],
-      vibration: [[2.3, [80, 40, 160]]],
+      dauer: 7.8,
+      toene: [[0.1, 'ladenLang'], [1.6, 'whoosh'], [2.75, 'lockon'], [3.5, 'whoosh'], [4.2, 'laser'], [4.7, 'whoosh'], [5.2, 'explosion'], [5.3, 'nachhall'], [7.45, 'hyperraum']],
+      vibration: [[4.2, [30]], [5.2, [120, 50, 200]]],
       gewinnText: (v) => `Orbitalschlag auf ${v} ausgeführt 🛸`,
       verlierText: 'Du wurdest aus dem Orbit erledigt 😵',
-      vorbereiten: () => ({
-        sterne: Array.from({ length: 120 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() < 0.1 ? 2 : 1, p: Math.random() * 6 })),
-        teile: teileErzeugen(140, 260, ['#fde047', '#f97316', '#ef4444', '#fff7ed']),
-        flug: Math.random() < 0.5 ? -1 : 1,
-      }),
+      vorbereiten: (d) => {
+        const n = d.verlierer.length;
+        return {
+          sterne: Array.from({ length: 160 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() < 0.15 ? 2 : 1, p: Math.random() * 6, tiefe: 0.3 + Math.random() * 0.7 })),
+          funken: Array.from({ length: 26 }, () => ({ w: Math.random() * Math.PI * 2, versatz: Math.random() })),
+          truemmer: Array.from({ length: 150 }, () => {
+            const w = -Math.PI * (0.05 + Math.random() * 0.9);
+            const v = 150 + Math.random() * 650;
+            return { vx: Math.cos(w) * v, vy: Math.sin(w) * v, r: 3 + Math.random() * 9, farbe: ['#fde047', '#f97316', '#ef4444', '#78716c', '#fff7ed'][Math.floor(Math.random() * 5)] };
+          }),
+          rauch: Array.from({ length: 40 }, (_, i) => ({ start: 0.25 + i * 0.05, dx: (Math.random() - 0.5) * 80, r: 25 + Math.random() * 35 })),
+          // Verlierer stehen auf der Erdkrümmung, fliegen beim Einschlag in verschiedene Richtungen
+          figuren: d.verlierer.map((name, i) => ({ name, x: n === 1 ? 0 : i ? 85 : -85, flugX: n === 1 ? 420 : i ? 560 : -560, flugY: 1250, dreh: i ? 7 : -7 })),
+        };
+      },
       zeichne(c, w, h, t, d) {
-        sterne(c, w, h, d.sterne, t);
-        const r = Math.min(w * 0.75, h * 0.55);
-        const ex = w / 2;
-        const ey = h + r * 0.2;
-        const oben = ey - r;
+        const ERDE = { y: 2600, r: 1400 };
+        const OBEN = ERDE.y - ERDE.r; // y der Erdoberfläche unter dem Schiff
+        const KANONE = 62; // y der Laserspitze unter dem Schiff
+        const EINSCHLAG = 5.2;
+        const b = Math.min(w, h * 0.8) / 600; // Grundzoom passend zur Bildschirmgröße
+        const zwischenwert = (a, z, x) => a + (z - a) * x;
+
+        // ---------- Kamera ----------
+        const kamera = (z) => {
+          if (z < 1.6) { const x = sanft(z / 1.6); return { y: zwischenwert(28, 48, x), k: zwischenwert(1.9, 2.35, x) }; }
+          if (z < 2.1) { const x = sanft(anteil(z, 1.6, 2.1)); return { y: zwischenwert(48, OBEN - 45, x), k: zwischenwert(2.35, 2.0, x) }; }
+          if (z < 3.5) { const x = sanft(anteil(z, 2.1, 3.5)); return { y: zwischenwert(OBEN - 45, OBEN - 40, x), k: zwischenwert(2.0, 2.3, x) }; }
+          if (z < 4.0) { const x = sanft(anteil(z, 3.5, 4.0)); return { y: zwischenwert(OBEN - 40, 40, x), k: zwischenwert(2.3, 2.7, x) }; }
+          if (z < 4.7) return { y: 40, k: 2.7 };
+          if (z < 5.2) { const x = Math.pow(anteil(z, 4.7, 5.2), 2); return { y: zwischenwert(40, OBEN - 110, x), k: zwischenwert(2.7, 1.8, x) }; }
+          if (z < 5.5) { const x = raus(anteil(z, 5.2, 5.5)); return { y: zwischenwert(OBEN - 110, OBEN - 80, x), k: zwischenwert(1.8, 1.25, x) }; }
+          if (z < 6.3) return { y: OBEN - 80, k: zwischenwert(1.25, 1.15, anteil(z, 5.5, 6.3)) };
+          const x = sanft(anteil(z, 6.3, 7.4));
+          return { y: zwischenwert(OBEN - 80, OBEN / 2, x), k: zwischenwert(1.15, 0.36, x) };
+        };
+        const kam = kamera(t);
+        const z = kam.k * b;
+        const vorher = kamera(Math.max(0, t - 0.04));
+        const tempo = (kam.y - vorher.y) * z; // Bildschirm-Pixel je 40 ms → Länge der Sternstreifen
+        const bild = (x, y) => [w / 2 + x * z, h / 2 + (y - kam.y) * z];
+
+        // ---------- Hintergrund: Sterne mit Parallaxe, bei Reißschwenks als Streifen ----------
+        c.fillStyle = '#02040c';
+        c.fillRect(0, 0, w, h);
+        c.strokeStyle = '#fff';
+        c.fillStyle = '#fff';
+        for (const s of d.sterne) {
+          const kachel = h * 1.5;
+          const y = (((s.y * kachel - kam.y * z * 0.15 * s.tiefe) % kachel) + kachel) % kachel - kachel * 0.25;
+          const x = s.x * w;
+          c.globalAlpha = 0.45 + 0.45 * Math.sin(t * 3 + s.p);
+          const streifen = Math.abs(tempo) * 0.6 * s.tiefe;
+          if (streifen > 3) {
+            c.lineWidth = s.r;
+            c.beginPath();
+            c.moveTo(x, y);
+            c.lineTo(x, y - Math.sign(tempo) * streifen);
+            c.stroke();
+          } else c.fillRect(x, y, s.r, s.r);
+        }
+        c.globalAlpha = 1;
+
+        // ---------- Welt (in Weltkoordinaten zeichnen) ----------
+        const wackeln = t > 4.2 && t < 4.5 ? (Math.random() - 0.5) * 6 : 0;
+        c.save();
+        c.translate(w / 2, h / 2);
+        c.scale(z, z);
+        c.translate(0, -kam.y);
+
         // Erde
-        const verlauf = c.createRadialGradient(ex - r * 0.3, ey - r * 0.5, r * 0.1, ex, ey, r);
+        const verlauf = c.createRadialGradient(-ERDE.r * 0.3, ERDE.y - ERDE.r * 0.6, ERDE.r * 0.1, 0, ERDE.y, ERDE.r);
         verlauf.addColorStop(0, '#60a5fa');
         verlauf.addColorStop(1, '#1e3a8a');
+        c.fillStyle = 'rgba(147,197,253,0.18)';
+        c.beginPath();
+        c.arc(0, ERDE.y, ERDE.r + 40, 0, Math.PI * 2);
+        c.fill();
         c.fillStyle = verlauf;
         c.beginPath();
-        c.arc(ex, ey, r, 0, Math.PI * 2);
+        c.arc(0, ERDE.y, ERDE.r, 0, Math.PI * 2);
         c.fill();
-        c.fillStyle = '#22c55e';
-        for (const [dx, dy, rx, ry] of [[-0.35, -0.75, 0.22, 0.1], [0.25, -0.82, 0.18, 0.08], [0.05, -0.6, 0.12, 0.06], [-0.6, -0.45, 0.1, 0.12]]) {
+        c.fillStyle = '#16a34a';
+        for (const [x, y, rx, ry, dreh] of [[-420, 1330, 260, 90, 0.2], [260, 1300, 220, 70, -0.15], [40, 1420, 150, 60, 0.4], [-760, 1600, 140, 160, 0.3], [700, 1560, 180, 120, -0.3]]) {
           c.beginPath();
-          c.ellipse(ex + dx * r, ey + dy * r, rx * r, ry * r, 0.3, 0, Math.PI * 2);
+          c.ellipse(x, y, rx, ry, dreh, 0, Math.PI * 2);
           c.fill();
         }
-        c.strokeStyle = 'rgba(147,197,253,0.6)';
-        c.lineWidth = 6;
-        c.beginPath();
-        c.arc(ex, ey, r + 4, 0, Math.PI * 2);
-        c.stroke();
-        // Krater nach dem Einschlag
-        if (t > 2.3) {
-          const k = c.createRadialGradient(ex, oben + 6, 2, ex, oben + 6, r * 0.25);
-          k.addColorStop(0, 'rgba(255,237,213,0.95)');
-          k.addColorStop(0.3, 'rgba(249,115,22,0.8)');
-          k.addColorStop(1, 'rgba(127,29,29,0)');
-          c.fillStyle = k;
+        c.fillStyle = 'rgba(255,255,255,0.55)';
+        for (const [x, y, rx] of [[-200, 1250, 120], [380, 1265, 90], [-600, 1420, 100]]) {
           c.beginPath();
-          c.arc(ex, oben + 6, r * 0.25, 0, Math.PI * 2);
+          c.ellipse(x + Math.sin(t * 0.5) * 20, y, rx, 18, 0, 0, Math.PI * 2);
           c.fill();
         }
-        // Verlierer auf der Erde – nach dem Einschlag fliegen ihre Namen davon
-        d.verlierer.forEach((name, i) => {
-          const n = d.verlierer.length;
-          const px = ex + (n === 1 ? 0 : (i - (n - 1) / 2) * Math.min(w * 0.35, 150));
-          const py = oben + 18 + Math.abs(px - ex) * 0.15;
-          const flug = Math.max(0, t - 2.3);
+
+        // Einschlag: Krater, Feuerball, Druckwelle, Trümmer, Rauch (in Zeitlupe)
+        const nachEinschlag = t >= EINSCHLAG;
+        const tau = !nachEinschlag ? 0 : t < EINSCHLAG + 0.6 ? (t - EINSCHLAG) * 0.3 : 0.18 + (t - EINSCHLAG - 0.6);
+        if (nachEinschlag) {
+          const krater = c.createRadialGradient(0, OBEN + 8, 4, 0, OBEN + 8, 160);
+          krater.addColorStop(0, 'rgba(255,237,213,0.95)');
+          krater.addColorStop(0.35, 'rgba(249,115,22,0.85)');
+          krater.addColorStop(1, 'rgba(127,29,29,0)');
+          c.fillStyle = krater;
+          c.beginPath();
+          c.arc(0, OBEN + 8, 160, 0, Math.PI * 2);
+          c.fill();
+          for (const p of d.rauch) {
+            const alter = tau - p.start;
+            if (alter < 0) continue;
+            c.globalAlpha = Math.max(0, 0.55 - alter * 0.12);
+            c.fillStyle = '#57534e';
+            c.beginPath();
+            c.arc(p.dx * (1 + alter), OBEN - 30 - alter * 160, p.r * (1 + alter * 0.8), 0, Math.PI * 2);
+            c.fill();
+          }
+          c.globalAlpha = 1;
+          if (tau < 1.6) {
+            const feuer = c.createRadialGradient(0, OBEN, 5, 0, OBEN, 70 + tau * 160);
+            feuer.addColorStop(0, `rgba(255,255,255,${1 - tau / 1.6})`);
+            feuer.addColorStop(0.4, `rgba(253,186,116,${0.9 * (1 - tau / 1.6)})`);
+            feuer.addColorStop(1, 'rgba(239,68,68,0)');
+            c.fillStyle = feuer;
+            c.beginPath();
+            c.arc(0, OBEN, 70 + tau * 160, 0, Math.PI * 2);
+            c.fill();
+          }
+          if (tau < 1) {
+            c.strokeStyle = `rgba(255,255,255,${1 - tau})`;
+            c.lineWidth = 16 * (1 - tau) + 2;
+            c.beginPath();
+            c.ellipse(0, OBEN, 40 + tau * 900, 12 + tau * 220, 0, 0, Math.PI * 2);
+            c.stroke();
+          }
+          for (const p of d.truemmer) {
+            const a = Math.max(0, 1 - tau / 2.2);
+            if (a <= 0) break;
+            c.globalAlpha = a;
+            c.fillStyle = p.farbe;
+            c.beginPath();
+            c.arc(p.vx * tau, OBEN + p.vy * tau + 260 * tau * tau, p.r, 0, Math.PI * 2);
+            c.fill();
+          }
+          c.globalAlpha = 1;
+        }
+
+        // Verlierer-Figuren (Körper + Gesicht); nach dem Einschlag wirbeln sie Richtung Kamera aus dem Bild
+        const n = d.figuren.length;
+        const lock = (i) => 2.4 + i * 0.45 + 0.35;
+        d.figuren.forEach((f, i) => {
+          const boden = ERDE.y - Math.sqrt(ERDE.r * ERDE.r - f.x * f.x);
+          let x = f.x;
+          let y = boden;
+          let dreh = 0;
+          let gross = 1;
+          if (nachEinschlag) {
+            x += f.flugX * tau;
+            y += -f.flugY * tau + 120 * tau * tau;
+            dreh = f.dreh * tau;
+            gross = 1 + tau * 2.6;
+          }
           c.save();
-          c.translate(px + flug * (i % 2 ? 140 : -140), py - 30 - flug * 260 + flug * flug * 60);
-          c.rotate(flug * (i % 2 ? 4 : -4));
-          c.font = `${28}px ${SCHRIFT}`;
-          c.textAlign = 'center';
-          c.fillText(flug > 0 ? '😵' : '🧍', 0, 0);
-          c.restore();
-          if (flug < 0.9) namensschild(c, kurz(name), px + flug * (i % 2 ? 140 : -140), py - 62 - flug * 260, { hinter: `rgba(255,255,255,${0.92 * (1 - flug / 0.9)})` });
-        });
-        // Raumschiff
-        const sx = w / 2 + (1 - sanft(anteil(t, 0, 1.0))) * w * 0.7 * d.flug;
-        const sy = h * 0.2;
-        const s = Math.min(w * 0.32, 140);
-        ufo(c, sx, sy, s, t);
-        namensschild(c, '🏆 ' + kurz(d.gewinner.join(' & ')), sx, sy - s * 0.42, { hinter: 'rgba(250,204,21,0.95)' });
-        // Aufladen
-        const laden = anteil(t, 1.0, 2.0);
-        if (laden > 0 && t < 2.35) {
-          c.fillStyle = `rgba(239,68,68,${0.4 + 0.4 * Math.sin(t * 30)})`;
+          c.translate(x, y);
+          c.rotate(dreh);
+          c.scale(gross, gross);
+          c.fillStyle = i ? '#f97316' : '#dc2626';
           c.beginPath();
-          c.arc(sx, sy + s * 0.12, 4 + laden * s * 0.12, 0, Math.PI * 2);
+          c.roundRect(-11, -34, 22, 30, 7);
+          c.fill();
+          c.fillStyle = '#1f2937';
+          c.fillRect(-9, -6, 7, 8);
+          c.fillRect(2, -6, 7, 8);
+          c.font = `26px ${SCHRIFT}`;
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.fillText(nachEinschlag ? '😵' : t > lock(i) ? '😨' : '🙂', 0, -46);
+          c.restore();
+        });
+
+        // Raumschiff (Seitenansicht), Kanone unten bei (0, KANONE)
+        const abflug = t > 7.45 ? Math.pow((t - 7.45) / 0.4, 3) * 4000 : 0;
+        const rueckstoss = t > 4.2 ? -10 * Math.max(0, 1 - (t - 4.2) / 0.3) : 0;
+        c.save();
+        c.translate(abflug + wackeln, rueckstoss + wackeln);
+        if (abflug > 0) {
+          const spur = c.createLinearGradient(-150 - abflug, 0, -150, 0);
+          spur.addColorStop(0, 'rgba(147,197,253,0)');
+          spur.addColorStop(1, 'rgba(219,234,254,0.95)');
+          c.fillStyle = spur;
+          c.fillRect(-150 - abflug, -12, abflug, 24);
+        }
+        // Triebwerke
+        for (const ty of [-18, 6]) {
+          const glut = c.createRadialGradient(-152, ty, 2, -152, ty, 26 + Math.sin(t * 20) * 3);
+          glut.addColorStop(0, 'rgba(219,234,254,1)');
+          glut.addColorStop(1, 'rgba(59,130,246,0)');
+          c.fillStyle = glut;
+          c.beginPath();
+          c.arc(-152, ty, 30, 0, Math.PI * 2);
           c.fill();
         }
-        // Strahl
-        if (t > 2.0 && t < 2.7) {
-          const breite = 4 + 26 * Math.sin(anteil(t, 2.0, 2.7) * Math.PI);
-          const strahl = c.createLinearGradient(sx - breite, 0, sx + breite, 0);
+        c.fillStyle = '#64748b';
+        c.beginPath();
+        c.moveTo(-150, -30);
+        c.lineTo(-120, -40);
+        c.lineTo(70, -40);
+        c.lineTo(160, -6);
+        c.lineTo(160, 4);
+        c.lineTo(80, 26);
+        c.lineTo(-130, 26);
+        c.lineTo(-150, 14);
+        c.closePath();
+        c.fill();
+        c.fillStyle = '#475569';
+        c.beginPath();
+        c.moveTo(-150, 2);
+        c.lineTo(160, 2);
+        c.lineTo(80, 26);
+        c.lineTo(-130, 26);
+        c.lineTo(-150, 14);
+        c.closePath();
+        c.fill();
+        c.strokeStyle = 'rgba(15,23,42,0.5)';
+        c.lineWidth = 1.5;
+        for (const x of [-90, -30, 30, 90]) {
+          c.beginPath();
+          c.moveTo(x, -40);
+          c.lineTo(x, 24);
+          c.stroke();
+        }
+        c.fillStyle = '#94a3b8';
+        c.fillRect(-70, -64, 80, 26);
+        c.fillStyle = 'rgba(191,219,254,0.9)';
+        for (let k = 0; k < 5; k++) c.fillRect(-62 + k * 14, -56, 8, 7);
+        c.fillStyle = Math.floor(t * 3) % 2 ? '#ef4444' : '#7f1d1d';
+        c.beginPath();
+        c.arc(150, -8, 3.5, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = Math.floor(t * 3 + 1) % 2 ? '#22c55e' : '#14532d';
+        c.beginPath();
+        c.arc(-140, -28, 3.5, 0, Math.PI * 2);
+        c.fill();
+        // Laserkanone
+        c.fillStyle = '#334155';
+        c.beginPath();
+        c.arc(0, 26, 18, 0, Math.PI);
+        c.fill();
+        c.fillStyle = '#1e293b';
+        c.fillRect(-6, 30, 12, KANONE - 30);
+        // Aufladen: Glut an der Spitze + eingesaugte Funken
+        if (t > 0.2 && t < 4.25) {
+          const laden = anteil(t, 0.2, 4.0);
+          const glow = c.createRadialGradient(0, KANONE, 1, 0, KANONE, 8 + 26 * laden);
+          glow.addColorStop(0, 'rgba(255,255,255,1)');
+          glow.addColorStop(0.35, `rgba(248,113,113,${0.7 + 0.3 * Math.sin(t * 25)})`);
+          glow.addColorStop(1, 'rgba(239,68,68,0)');
+          c.fillStyle = glow;
+          c.beginPath();
+          c.arc(0, KANONE, 8 + 26 * laden, 0, Math.PI * 2);
+          c.fill();
+          for (const f of d.funken) {
+            const phase = (t * 1.2 + f.versatz) % 1;
+            const r = 70 * (1 - phase);
+            c.globalAlpha = phase;
+            c.fillStyle = '#fecaca';
+            c.fillRect(Math.cos(f.w) * r - 1.5, KANONE + Math.sin(f.w) * r - 1.5, 3, 3);
+          }
+          c.globalAlpha = 1;
+        }
+        // Mündungsblitz
+        if (t > 4.2 && t < 4.4) {
+          c.fillStyle = `rgba(255,255,255,${1 - (t - 4.2) / 0.2})`;
+          c.beginPath();
+          c.arc(0, KANONE + 10, 60, 0, Math.PI * 2);
+          c.fill();
+        }
+        c.restore();
+
+        // Laserstrahl von der Kanone bis zur Strahlspitze (erreicht die Erde beim Einschlag)
+        if (t > 4.2 && t < 5.9) {
+          const spitze = KANONE + (OBEN - KANONE) * Math.pow(anteil(t, 4.2, EINSCHLAG), 2);
+          const breite = (14 + Math.sin(t * 60) * 3) * (t > 5.5 ? 1 - (t - 5.5) / 0.4 : 1);
+          const strahl = c.createLinearGradient(-breite, 0, breite, 0);
           strahl.addColorStop(0, 'rgba(239,68,68,0)');
-          strahl.addColorStop(0.5, 'rgba(254,226,226,1)');
+          strahl.addColorStop(0.5, 'rgba(255,241,242,1)');
           strahl.addColorStop(1, 'rgba(239,68,68,0)');
           c.fillStyle = strahl;
-          c.fillRect(sx - breite, sy + s * 0.12, breite * 2, oben - sy);
+          c.fillRect(-breite * 2, KANONE + rueckstoss, breite * 4, spitze - KANONE);
+          const kopf = c.createRadialGradient(0, spitze, 2, 0, spitze, 40);
+          kopf.addColorStop(0, 'rgba(255,255,255,1)');
+          kopf.addColorStop(1, 'rgba(239,68,68,0)');
+          c.fillStyle = kopf;
+          c.beginPath();
+          c.arc(0, spitze, 40, 0, Math.PI * 2);
+          c.fill();
         }
-        if (t > 2.3) explosion(c, d.teile, t - 2.3, ex, oben);
-        blitzlicht(c, w, h, t, 2.3, 0.4);
-        return t > 2.3 ? 14 * Math.max(0, 1 - (t - 2.3) / 0.9) : 0;
+        c.restore();
+
+        // ---------- Bildschirm-Ebene: Zielkreuz, Namen, Untertitel, Blitz, Kinobalken ----------
+        d.figuren.forEach((f, i) => {
+          const boden = ERDE.y - Math.sqrt(ERDE.r * ERDE.r - f.x * f.x);
+          const [sx, sy] = bild(f.x, boden - 30);
+          if (!nachEinschlag && t > 2.1) namensschild(c, kurz(f.name), sx, sy - 66 * z / 1.2);
+          const start = 2.4 + i * 0.45;
+          if (t > start && t < 3.5) {
+            const a = anteil(t, start, start + 0.35);
+            const r = 90 - 55 * sanft(a);
+            const fest = a >= 1;
+            c.save();
+            c.translate(sx, sy);
+            c.rotate((1 - sanft(a)) * 2);
+            c.strokeStyle = fest ? '#ef4444' : 'rgba(248,113,113,0.8)';
+            c.lineWidth = fest ? 3.5 : 2;
+            c.beginPath();
+            c.arc(0, 0, r, 0, Math.PI * 2);
+            c.stroke();
+            for (const winkel of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+              c.beginPath();
+              c.moveTo(Math.cos(winkel) * (r - 10), Math.sin(winkel) * (r - 10));
+              c.lineTo(Math.cos(winkel) * (r + 14), Math.sin(winkel) * (r + 14));
+              c.stroke();
+            }
+            c.restore();
+            if (fest && i === n - 1 && Math.floor(t * 6) % 2 === 0) {
+              c.font = `900 ${Math.round(Math.min(22, w / 18))}px ${SCHRIFT}`;
+              c.textAlign = 'center';
+              c.fillStyle = '#ef4444';
+              c.fillText('🎯 ZIEL ERFASST', w / 2, h * 0.3);
+            }
+          }
+        });
+
+        const balken = h * 0.1 * (t < this.dauer ? Math.min(1, t / 0.3) : 1 - anteil(t, this.dauer, this.dauer + 0.5));
+        const untertitel = (text, von, bis) => {
+          if (t < von || t > bis) return;
+          c.globalAlpha = Math.min(anteil(t, von, von + 0.25), 1 - anteil(t, bis - 0.25, bis));
+          c.font = `800 ${Math.round(Math.min(20, w / 20))}px ${SCHRIFT}`;
+          c.textAlign = 'left';
+          c.fillStyle = '#fde047';
+          c.fillText(text, 18, h - balken - 22);
+          c.globalAlpha = 1;
+        };
+        untertitel('🏆 Kommandant ' + kurz(d.gewinner.join(' & ')), 0.3, 1.6);
+        untertitel('🌍 Ziel: ' + d.figuren.map((f) => kurz(f.name)).join(' & '), 2.2, 3.5);
+        untertitel('🔥 FEUER!', 4.15, 4.8);
+
+        blitzlicht(c, w, h, t, EINSCHLAG, 0.45);
+        blitzlicht(c, w, h, t, 7.45, 0.25, '#dbeafe', 0.3);
+        if (balken > 0) {
+          c.fillStyle = '#000';
+          c.fillRect(0, 0, w, balken);
+          c.fillRect(0, h - balken, w, balken);
+        }
+        return nachEinschlag && tau < 0.9 ? 16 * (1 - tau / 0.9) : 0;
       },
     },
 
@@ -809,7 +1099,7 @@ const Finisher = (() => {
   function zeigen(daten, optionen = {}) {
     const art = daten.verlierer.length === 0 ? 'doppelko' : optionen.art || ARTEN[streuung(daten.id || '') % ARTEN.length];
     const szene = SZENEN[art];
-    const d = { ...daten, alle: [...daten.gewinner, ...daten.verlierer], ...szene.vorbereiten() };
+    const d = { ...daten, alle: [...daten.gewinner, ...daten.verlierer], ...szene.vorbereiten(daten) };
     const verlierer = daten.verlierer.join(' & ');
     let titel;
     let unter;
