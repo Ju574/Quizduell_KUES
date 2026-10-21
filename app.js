@@ -176,12 +176,18 @@ async function ladeSpieler() {
   return liste;
 }
 
-// Liest das Duell frisch, wendet die Änderung an und speichert – bei gleichzeitiger Änderung wird wiederholt.
-async function duellAktualisieren(id, aendern) {
+// Wendet die Änderung an und speichert – bei gleichzeitiger Änderung wird frisch gelesen und wiederholt.
+// bekannt: zuletzt bekannter Stand des Duells – spart das vorherige Lesen (eine Serveranfrage weniger),
+// solange niemand anderes dazwischen gespeichert hat.
+async function duellAktualisieren(id, aendern, bekannt = null) {
   for (let versuch = 0; versuch < 6; versuch++) {
-    const duell = await DB.duellLaden(id);
+    const ausCache = versuch === 0 && !!bekannt;
+    const duell = ausCache ? bekannt : await DB.duellLaden(id);
     const neu = aendern(JSON.parse(JSON.stringify(duell)));
-    if (!neu) return duell;
+    if (!neu) {
+      if (ausCache) continue; // vielleicht nur veraltet – mit frischem Stand nochmal entscheiden
+      return duell;
+    }
     const gespeichert = await DB.duellAendern(id, duell.version, { status: neu.status, daten: neu.daten });
     if (gespeichert) return gespeichert;
   }
@@ -281,8 +287,15 @@ function vorbereiten(text) {
     vorher = t;
     t = t.replace(FUELLWORT, '');
   }
-  const zahlen = (t.match(/\d+(?:[.,]\d+)?/g) || []).map((z) => z.replace(',', '.'));
+  const zahlen = (t.match(/\d+(?:[.,]\d+)*/g) || []).map(zahlWert);
+  t = t.replace(/\d+(?:[.,]\d+)*/g, zahlWert);
   return { kompakt: t.replace(/[^a-z0-9]/g, ''), zahlen: zahlen.join('|') };
+}
+
+// „1.760“ → 1760 (Tausenderpunkt), „1,6“ und „1.6“ → 1.6, „1,60“ → 1.6
+function zahlWert(z) {
+  const wert = Number(/^\d{1,3}(\.\d{3})+$/.test(z) ? z.replace(/\./g, '') : z.replace(',', '.'));
+  return Number.isNaN(wert) ? z : String(wert);
 }
 
 function abstand(a, b) {
@@ -297,16 +310,18 @@ function abstand(a, b) {
   return vorige[b.length];
 }
 
-// → { richtig, exakt } – exakt = ohne Tippfehler-Toleranz getroffen
+// → { richtig, exakt } – exakt = ohne Tippfehler-Toleranz getroffen.
+// Zahlen müssen immer stimmen („16 mm“ ist nicht „1,6 mm“, auch wenn ohne Komma dieselben Zeichen bleiben).
 function eingabePruefen(eingabe, loesung) {
   const e = vorbereiten(eingabe);
   if (!e.kompakt || !loesung) return { richtig: false };
   let tippfehler = false;
   for (const kandidat of [loesung.richtig, ...(loesung.alternativen || [])]) {
     const z = vorbereiten(kandidat);
+    if (e.zahlen !== z.zahlen) continue;
     if (e.kompakt === z.kompakt) return { richtig: true, exakt: true };
     const erlaubt = z.kompakt.length <= 4 ? 0 : z.kompakt.length <= 8 ? 1 : 2;
-    if (e.zahlen === z.zahlen && abstand(e.kompakt, z.kompakt) <= erlaubt) tippfehler = true;
+    if (abstand(e.kompakt, z.kompakt) <= erlaubt) tippfehler = true;
   }
   return { richtig: tippfehler, exakt: false };
 }
@@ -327,7 +342,8 @@ const beschriftenFeld = (frage) => `
   </form>`;
 
 // Nummer antippen → dem Begriff zuordnen (eine Nummer gehört immer nur zu einem Begriff,
-// nochmal antippen hebt die Wahl auf). Absenden → beiAbsenden([Nummer oder null je Begriff])
+// nochmal antippen hebt die Wahl auf). Absenden → beiAbsenden([Nummer oder null je Begriff]).
+// Gibt eine Funktion zurück, die die aktuelle Wahl liefert (zum Einfärben, wenn die Zeit abläuft).
 function beschriftenAktivieren(beiAbsenden) {
   const zeilen = [...app.querySelectorAll('.beschriften-zeile')];
   const wahl = zeilen.map(() => null);
@@ -354,11 +370,13 @@ function beschriftenAktivieren(beiAbsenden) {
   on('#eingabe-form', (e) => {
     e.preventDefault();
     if (wahl.some((w) => w != null)) beiAbsenden([...wahl]);
+    else toast('Tippe zu jedem Begriff die passende Nummer an.');
   }, 'submit');
+  return () => [...wahl];
 }
 
 function beschriftungAusLoesung(loesung) {
-  return String(loesung.richtig || '')
+  return String((loesung && loesung.richtig) || '')
     .split('\n')
     .filter((z) => z.includes(':'))
     .map((z) => ({ nr: z.slice(0, z.indexOf(':')).trim(), begriff: z.slice(z.indexOf(':') + 1).trim() }));
@@ -427,7 +445,8 @@ function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
 // Zeigt eine Frage mit optionalem Zeitlimit. Die Lösung wird erst nach dem Antworten geladen.
 // beiAntwort(richtig) wird sofort aufgerufen (kann ein Promise liefern), weiter() nach Klick auf „Weiter“.
 // serieVorher: richtige Antworten in Folge vor dieser Frage (für die Serien-Flamme)
-function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVorher = 0 }) {
+// start: Zeitpunkt, ab dem die Zeit läuft (nach Neuladen läuft sie weiter statt neu zu beginnen)
+function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVorher = 0, start = Date.now() }) {
   ansicht = 'frage';
   const eingabe = frage.typ === 'eingabe';
   const beschriften = frage.typ === 'beschriften';
@@ -466,7 +485,7 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
     }
 
     const pruefung = !loesung ? null
-      : beschriften ? beschriftenPruefen(gewaehlt, loesung, frage.begriffe)
+      : beschriften ? beschriftenPruefen(gewaehlt ?? beschriftenWahl(), loesung, frage.begriffe)
       : eingabe && gewaehlt != null ? eingabePruefen(gewaehlt, loesung) : null;
     const richtig = eingabe || beschriften
       ? gewaehlt != null && !!(pruefung && pruefung.richtig)
@@ -503,8 +522,8 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
   };
   app.querySelectorAll('.antwort').forEach((k, i) => k.addEventListener('click', () => aufloesen(i)));
   if (eingabe) eingabeAktivieren(aufloesen);
-  if (beschriften) beschriftenAktivieren(aufloesen);
-  if (sekunden) timerStarten(app.querySelector('.timer-balken'), sekunden * 1000, () => aufloesen(null));
+  const beschriftenWahl = beschriften ? beschriftenAktivieren(aufloesen) : () => null;
+  if (sekunden) timerStarten(app.querySelector('.timer-balken'), sekunden * 1000, () => aufloesen(null), start);
 }
 
 // Absenden des Eingabefelds (Enter oder „Prüfen“) → beiAbsenden(text)
@@ -786,7 +805,11 @@ async function anmelden(spieler) {
   try {
     await katalogLaden();
   } catch (e) {
-    // Gruppen-Passwort wurde geändert oder ist falsch
+    // Gruppen-Passwort wurde geändert oder ist falsch – bei Verbindungsfehlern bleibt es gespeichert
+    if (!/passwort/i.test(e.message || '')) {
+      fehler(e);
+      return login('Keine Verbindung zur Datenbank – bitte später nochmal versuchen.');
+    }
     passwort = '';
     speichern('pruefi-pw', null);
     return login('Bitte gib das (neue) Gruppen-Passwort ein.');
@@ -809,6 +832,7 @@ async function anmelden(spieler) {
 function abmelden() {
   speichern('pruefi-ich', null);
   if (spielerAbo) spielerAbo();
+  spielerAbo = null;
   if (onlineAbo) onlineAbo();
   onlineAbo = null;
   online = new Set();
@@ -916,6 +940,7 @@ function themenText(themen) {
   const drin = KATEGORIEN.filter((k) => !ohne.includes(k));
   let text;
   if (!ohne.length) text = 'Alle Themen';
+  else if (!drin.length) text = 'Kein Thema gewählt';
   else if (drin.length === 1) text = drin[0];
   else {
     const gruppen = [...new Set(drin.map(themaVon))];
@@ -1237,17 +1262,17 @@ async function rundenZug(id) {
   if (offen >= 0) return rundeSpielen(duell, offen);
   const letzte = d.runden[d.runden.length - 1];
   if (d.runden.length < d.anzahl && (!letzte || rundeKomplett(letzte, duell))) return kategorieWaehlen(duell);
-  return zugBeenden(duell.id);
+  return zugBeenden(duell.id, duell);
 }
 
-async function zugBeenden(id) {
+async function zugBeenden(id, bekannt) {
   const duell = await duellAktualisieren(id, (d) => {
     if (d.status !== 'laeuft' || d.daten.amZug !== ich.id) return null;
     const komplett = d.daten.runden.length >= d.daten.anzahl && d.daten.runden.every((r) => rundeKomplett(r, d));
     if (komplett) d.status = 'beendet';
     else d.daten.amZug = naechsterSpieler(d, ich.id);
     return d;
-  });
+  }, bekannt);
   rundenUebersicht(duell);
 }
 
@@ -1286,7 +1311,7 @@ async function kategorieWaehlen(duell) {
           if (x.daten.runden.length !== d.runden.length || x.daten.amZug !== ich.id) return null;
           x.daten.runden.push({ kategorie: k, fragen, antworten: {} });
           return x;
-        });
+        }, duell);
         await rundenZug(duell.id);
       } catch (e) {
         fehler(e);
@@ -1300,13 +1325,15 @@ async function rundeSpielen(duell, idx) {
   let serie = serieImRundenduell(duell);
   await fragenLaden(runde.fragen);
   // Jede Antwort wird sofort gespeichert – so kann eine Frage nicht durch Neuladen wiederholt werden
-  const antwortSpeichern = (j, wert) =>
-    duellAktualisieren(duell.id, (x) => {
+  let stand = duell;
+  const antwortSpeichern = async (j, wert) => {
+    stand = await duellAktualisieren(duell.id, (x) => {
       const liste = (x.daten.runden[idx].antworten[ich.id] ||= []);
       if (liste.length !== j) return null;
       liste.push(wert);
       return x;
-    });
+    }, stand);
+  };
 
   const naechste = async (j) => {
     if (j >= runde.fragen.length) return rundeErgebnis(duell.id, idx);
@@ -1316,16 +1343,25 @@ async function rundeSpielen(duell, idx) {
       await antwortSpeichern(j, 0);
       return naechste(j + 1);
     }
+    // Wann die Frage zum ersten Mal gezeigt wurde – nach Neuladen läuft die Zeit weiter statt neu zu beginnen
+    const gezeigt = `pruefi-gezeigt-${duell.id}-${idx}-${j}`;
+    let start = Date.now();
+    try {
+      start = Number(localStorage.getItem(gezeigt)) || start;
+      localStorage.setItem(gezeigt, start);
+    } catch {}
     frageZeigen({
       frage,
       titel: `Runde ${idx + 1} · ${runde.kategorie}`,
       info: `Frage ${j + 1}/${runde.fragen.length}`,
       sekunden: sekundenVon(duell),
       serieVorher: serie,
-      beiAntwort: (richtig) => {
+      start,
+      beiAntwort: async (richtig) => {
         serie = richtig ? serie + 1 : 0;
         lernstandBuchen(frage.id, richtig);
-        return antwortSpeichern(j, richtig ? 1 : 0);
+        await antwortSpeichern(j, richtig ? 1 : 0);
+        try { localStorage.removeItem(gezeigt); } catch {}
       },
       weiter: () => naechste(j + 1).catch(fehler),
     });
@@ -1439,7 +1475,7 @@ function liveTick(live) {
       .then(([l]) => {
         if (live.phase !== phase || !l) return;
         const f = FRAGEN_TEXT.get(d.fragen[i]);
-        if (f?.typ === 'beschriften') beschriftenMarkieren(beschriftenPruefen(null, l, f.begriffe));
+        if (f?.typ === 'beschriften') beschriftenMarkieren(beschriftenPruefen(live.beschriftenWahl(), l, f.begriffe));
         else markieren(live.optionen, -1, l.richtig);
       })
       .catch(fehler);
@@ -1639,6 +1675,7 @@ function liveFrage(live) {
   const beschriften = !!frage && frage.typ === 'beschriften';
   live.optionen = frage && !eingabe && !beschriften ? shuffle(frage.antworten) : [];
   live.gewaehlt = null;
+  live.beschriftenWahl = () => null;
   show(`
     ${liveKopf(duell)}
     <div class="frage-kopf"><span>⚡ ${esc(d.kategorie)}</span><span>Frage ${i + 1}/${d.fragen.length}${typHinweis(frage)}${zeitHinweis(liveDauer(duell), frage)}</span></div>
@@ -1659,9 +1696,26 @@ function liveFrage(live) {
     app.querySelector('#meine-meldung').textContent = 'Bereits beantwortet – warte auf die anderen.';
     return;
   }
+  if (!frage) {
+    // Frage wurde inzwischen aus der Datenbank entfernt – zählt für niemanden, sonst hinge das Battle ohne Zeitlimit fest
+    live.gewaehlt = -1;
+    liveSpeichern(live, i, { r: 0, ms: 0, p: 0 }).catch(fehler);
+    return;
+  }
   app.querySelectorAll('.antwort').forEach((k, idx) => (k.onclick = () => liveAntworten(live, frage, idx)));
   if (eingabe) eingabeAktivieren((text) => liveAntworten(live, frage, text));
-  if (beschriften) beschriftenAktivieren((wahl) => liveAntworten(live, frage, wahl));
+  if (beschriften) live.beschriftenWahl = beschriftenAktivieren((wahl) => liveAntworten(live, frage, wahl));
+}
+
+// Speichert meine Antwort auf Frage i (nur einmal, nur solange die Frage dran ist)
+async function liveSpeichern(live, i, eintrag) {
+  live.uebernehmen(
+    await duellAktualisieren(live.duell.id, (x) => {
+      if (x.status !== 'laeuft' || x.daten.index !== i || x.daten.antworten[ich.id][i]) return null;
+      x.daten.antworten[ich.id][i] = eintrag;
+      return x;
+    }, live.duell)
+  );
 }
 
 // auswahl: Index der gewählten Antwort, eingetippter Text oder gewählte Nummern je Begriff (Beschriften)
@@ -1690,13 +1744,7 @@ async function liveAntworten(live, frage, auswahl) {
       app.querySelector('#meine-meldung').innerHTML = richtig ? `<span class="ok">✓ Richtig! +${p}</span> ${serieText(serie)}` : '<span class="nok">✗ Leider falsch</span>';
     }
     lernstandBuchen(frage.id, richtig);
-    live.uebernehmen(
-      await duellAktualisieren(live.duell.id, (x) => {
-        if (x.status !== 'laeuft' || x.daten.index !== i || x.daten.antworten[ich.id][i]) return null;
-        x.daten.antworten[ich.id][i] = { r: richtig ? 1 : 0, ms, p };
-        return x;
-      })
-    );
+    await liveSpeichern(live, i, { r: richtig ? 1 : 0, ms, p });
   } catch (e) {
     fehler(e);
   }
@@ -1726,7 +1774,7 @@ async function liveWeiter(live, i) {
         d.start = jetzt + E.LIVE_PAUSE_MS;
       }
       return x;
-    });
+    }, live.duell);
     live.uebernehmen(neu);
     if (neu.status === 'laeuft' && neu.daten.index === i) setTimeout(() => (live.weiterAngefragt = -1), 1000);
   } catch (e) {
@@ -2013,7 +2061,7 @@ async function adminAnsicht() {
       .map((s) => `
         <div class="admin-zeile">
           <div class="admin-info">${onlinePunkt(s.id)}<b>${esc(s.name)}</b>${s.id === ich.id ? ' <span class="gedaempft">(du)</span>' : ''}
-            <div class="klein gedaempft">${anzahlDuelle(s.id)} Duelle · seit ${datum(s.erstellt)}</div></div>
+            <div class="klein gedaempft">${anzahlDuelle(s.id)} ${anzahlDuelle(s.id) === 1 ? 'Duell' : 'Duelle'} · seit ${datum(s.erstellt)}</div></div>
           <button class="btn klein" data-lernstand="${esc(s.id)}">Lernstand ↺</button>
           <button class="btn klein gefahr" data-spieler="${esc(s.id)}">Löschen</button>
         </div>`)
