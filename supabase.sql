@@ -169,10 +169,11 @@ begin
 end $$;
 
 -- Fragetexte mit gemischten Antworten – OHNE Hinweis, welche richtig ist
--- (bei Eingabe-Fragen ganz ohne Antworten, bei Beschriften-Fragen nur die Nummern der Felder)
+-- (bei Eingabe-Fragen ganz ohne Antworten, bei Beschriften-Fragen die Nummern der Skizze
+-- und getrennt davon die Begriffe in zufälliger Reihenfolge)
 drop function if exists public.fragen_holen(text, text[]);
 create function public.fragen_holen(p_passwort text, p_ids text[])
-returns table (id text, kategorie text, frage text, typ text, antworten text[], bild text)
+returns table (id text, kategorie text, frage text, typ text, antworten text[], bild text, begriffe text[])
 language plpgsql
 stable
 security definer
@@ -194,7 +195,11 @@ begin
                   from unnest(string_to_array(f.richtig, E'\n')) with ordinality as t(z, n)
                   where z ~ ':' order by n)
                 else (select array_agg(a order by random()) from unnest(array_prepend(f.richtig, f.falsch)) as a) end,
-           f.bild
+           f.bild,
+           case when f.typ = 'beschriften' then array(
+                  select trim(substr(z, strpos(z, ':') + 1))
+                  from unnest(string_to_array(f.richtig, E'\n')) as t(z)
+                  where z ~ ':' order by random()) end
     from public.fragen f
     where f.id = any(p_ids);
 end $$;

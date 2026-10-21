@@ -10,7 +10,7 @@
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
 //   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie, rechnung }]
-//   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten, bild }]   (max. 20, ohne Lösung)
+//   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten, begriffe, bild }]   (max. 20, ohne Lösung)
 //   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen, bild_nach }]   (max. 20)
 //   bildHolen(pw, bildId) → Adresse für <img src> (Gruppen- oder Admin-Passwort)
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
@@ -269,6 +269,7 @@ function demoBackend() {
           frage: f.frage,
           typ: f.typ || 'auswahl',
           antworten: f.typ === 'eingabe' ? [] : f.typ === 'beschriften' ? beschriftungNummern(f.richtig) : mischen([f.richtig, ...f.falsch]),
+          begriffe: f.typ === 'beschriften' ? mischen(beschriftungBegriffe(f.richtig)) : null,
           bild: f.bild || null,
         }));
     },
@@ -385,6 +386,10 @@ async function demoFragen(pw) {
 // „1: Heizelement⏎2: …“ → ['1', '2', …] (wie fragen_holen in der Datenbank)
 const beschriftungNummern = (richtig) =>
   String(richtig).split('\n').filter((z) => z.includes(':')).map((z) => z.split(':')[0].trim());
+
+// … → ['Heizelement', …] (Begriffe, werden gemischt angezeigt)
+const beschriftungBegriffe = (richtig) =>
+  String(richtig).split('\n').filter((z) => z.includes(':')).map((z) => z.slice(z.indexOf(':') + 1).trim());
 
 function mischen(liste) {
   const a = [...liste];

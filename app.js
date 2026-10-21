@@ -311,67 +311,84 @@ function eingabePruefen(eingabe, loesung) {
   return { richtig: tippfehler, exakt: false };
 }
 
-// ===== Beschriften-Fragen (nummerierte Skizze, je Nummer ein Eingabefeld) =====
-// Lösung: je Zeile „Nr: Begriff“, Alternativen ebenfalls als „Nr: Begriff“. Jedes Feld wird wie eine
-// Eingabe-Frage geprüft; die Frage zählt als richtig, wenn alle Felder stimmen.
-const beschriftenFeld = (nummern) => `
+// ===== Beschriften-Fragen (nummerierte Skizze, Begriffe den Nummern zuordnen) =====
+// Lösung: je Zeile „Nr: Begriff“. Die App zeigt die Begriffe gemischt, zu jedem tippt man die passende Nummer an.
+// Ein Begriff zählt als richtig, wenn an der gewählten Nummer genau dieser Begriff steht
+// (so gehen auch Begriffe, die mehrfach vorkommen). Die Frage ist richtig, wenn alle Begriffe stimmen.
+const beschriftenFeld = (frage) => `
   <form id="eingabe-form" class="beschriften">
-    ${nummern.map((nr, k) => `
-      <label class="beschriften-zeile">
-        <span class="nr">${esc(nr)}</span>
-        <input data-k="${k}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…">
+    ${(frage.begriffe || []).map((begriff, k) => `
+      <div class="beschriften-zeile" data-k="${k}">
+        <span class="begriff">${esc(begriff)}</span>
+        <span class="nummern">${frage.antworten.map((nr) => `<button type="button" class="nr-wahl" data-nr="${esc(nr)}">${esc(nr)}</button>`).join('')}</span>
         <span class="soll ok klein"></span>
-      </label>`).join('')}
+      </div>`).join('')}
     <button class="btn primaer">Prüfen</button>
   </form>`;
 
-// Enter springt ins nächste Feld, im letzten Feld wird abgeschickt → beiAbsenden([texte])
+// Nummer antippen → dem Begriff zuordnen (eine Nummer gehört immer nur zu einem Begriff,
+// nochmal antippen hebt die Wahl auf). Absenden → beiAbsenden([Nummer oder null je Begriff])
 function beschriftenAktivieren(beiAbsenden) {
-  const felder = [...app.querySelectorAll('.beschriften input')];
-  felder[0].focus();
-  felder.forEach((feld, k) =>
-    feld.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && k < felder.length - 1) {
-        e.preventDefault();
-        felder[k + 1].focus();
-      }
-    })
+  const zeilen = [...app.querySelectorAll('.beschriften-zeile')];
+  const wahl = zeilen.map(() => null);
+  const zeichnen = () =>
+    zeilen.forEach((zeile, k) =>
+      zeile.querySelectorAll('.nr-wahl').forEach((knopf) => {
+        knopf.classList.toggle('gewaehlt', knopf.dataset.nr === wahl[k]);
+        knopf.classList.toggle('vergeben', wahl[k] !== knopf.dataset.nr && wahl.includes(knopf.dataset.nr));
+      })
+    );
+  zeilen.forEach((zeile, k) =>
+    zeile.querySelectorAll('.nr-wahl').forEach((knopf) =>
+      knopf.addEventListener('click', () => {
+        const nr = knopf.dataset.nr;
+        if (wahl[k] === nr) wahl[k] = null;
+        else {
+          wahl.forEach((w, j) => w === nr && (wahl[j] = null));
+          wahl[k] = nr;
+        }
+        zeichnen();
+      })
+    )
   );
   on('#eingabe-form', (e) => {
     e.preventDefault();
-    const texte = felder.map((f) => f.value.trim());
-    if (texte.some(Boolean)) beiAbsenden(texte);
-    else felder[0].focus();
+    if (wahl.some((w) => w != null)) beiAbsenden([...wahl]);
   }, 'submit');
 }
 
 function beschriftungAusLoesung(loesung) {
-  const teilen = (z) => [z.slice(0, z.indexOf(':')).trim(), z.slice(z.indexOf(':') + 1).trim()];
-  const alternativen = (loesung.alternativen || []).filter((a) => a.includes(':')).map(teilen);
   return String(loesung.richtig || '')
     .split('\n')
     .filter((z) => z.includes(':'))
-    .map(teilen)
-    .map(([nr, richtig]) => ({ nr, richtig, alternativen: alternativen.filter((a) => a[0] === nr).map((a) => a[1]) }));
+    .map((z) => ({ nr: z.slice(0, z.indexOf(':')).trim(), begriff: z.slice(z.indexOf(':') + 1).trim() }));
 }
 
-// → { richtig, exakt, felder: [{ nr, richtig: Lösungstext, ok, exakt }] }
-function beschriftenPruefen(texte, loesung) {
-  const felder = beschriftungAusLoesung(loesung).map((f, k) => {
-    const p = eingabePruefen((texte || [])[k], f);
-    return { nr: f.nr, richtig: f.richtig, ok: !!p.richtig, exakt: !!p.exakt };
+// → { richtig, exakt, felder: [{ begriff, nummern: richtige Nummern, ok }] } – felder in der Reihenfolge der Begriffe
+function beschriftenPruefen(wahl, loesung, begriffe) {
+  const soll = beschriftungAusLoesung(loesung);
+  const gleich = (a, b) => vorbereiten(a).kompakt === vorbereiten(b).kompakt;
+  const felder = (begriffe || []).map((begriff, k) => {
+    const gewaehlt = (wahl || [])[k];
+    const nummern = soll.filter((s) => gleich(s.begriff, begriff)).map((s) => s.nr);
+    return { begriff, nummern, ok: gewaehlt != null && nummern.includes(gewaehlt) };
   });
-  return { felder, richtig: felder.length > 0 && felder.every((f) => f.ok), exakt: felder.every((f) => f.exakt) };
+  return { felder, richtig: felder.length > 0 && felder.every((f) => f.ok), exakt: true };
 }
 
-// Färbt die Felder ein und schreibt die Lösung dazu, wo nicht exakt getroffen
+// Färbt die Zeilen ein, markiert die richtige Nummer und schreibt sie dazu, wo falsch zugeordnet
 function beschriftenMarkieren(pruefung) {
   const zeilen = app.querySelectorAll('.beschriften-zeile');
   pruefung.felder.forEach((f, k) => {
     const zeile = zeilen[k];
     if (!zeile) return;
-    zeile.querySelector('input').classList.add(f.ok ? 'richtig' : 'falsch');
-    if (!f.exakt) zeile.querySelector('.soll').textContent = '✓ ' + f.richtig;
+    zeile.classList.add(f.ok ? 'richtig' : 'falsch');
+    zeile.querySelectorAll('.nr-wahl').forEach((knopf) => {
+      knopf.disabled = true;
+      knopf.classList.remove('vergeben');
+      if (f.nummern.includes(knopf.dataset.nr)) knopf.classList.add('soll-nr');
+    });
+    if (!f.ok) zeile.querySelector('.soll').textContent = '✓ ' + f.nummern.join(' / ');
   });
 }
 
@@ -383,13 +400,13 @@ function lesezeit(frage) {
   return Math.min(90, Math.round(Math.max(0, zeichen - 250) / 18 / 5) * 5);
 }
 
-// Zeit pro Frage: Grundzeit + Lesezeit, Beschriften-Fragen zusätzlich 10 s pro weiterem Feld
+// Zeit pro Frage: Grundzeit + Lesezeit, Beschriften-Fragen zusätzlich 5 s pro weiterem Begriff
 const zeitFuer = (sekunden, frage) =>
   !sekunden || !frage ? sekunden
-    : sekunden + lesezeit(frage) + (frage.typ === 'beschriften' ? 10 * Math.max(0, frage.antworten.length - 1) : 0);
+    : sekunden + lesezeit(frage) + (frage.typ === 'beschriften' ? 5 * Math.max(0, frage.antworten.length - 1) : 0);
 
 const typHinweis = (frage) =>
-  (!frage ? '' : frage.typ === 'eingabe' ? ' · ✎ eintippen' : frage.typ === 'beschriften' ? ' · ✎ beschriften' : '');
+  (!frage ? '' : frage.typ === 'eingabe' ? ' · ✎ eintippen' : frage.typ === 'beschriften' ? ' · 👆 zuordnen' : '');
 const zeitHinweis = (sekunden, frage) => (sekunden && lesezeit(frage) ? ` · ⏱ +${lesezeit(frage)} s Lesezeit` : '');
 
 function timerStarten(balken, dauerMs, beiAblauf, start = Date.now()) {
@@ -421,12 +438,12 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
     ${sekunden ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage.frage)}</div>
     ${bildPlatz(frage.bild)}
-    ${beschriften ? beschriftenFeld(frage.antworten) : eingabe ? eingabeFeld() : antwortKnoepfe(optionen)}
+    ${beschriften ? beschriftenFeld(frage) : eingabe ? eingabeFeld() : antwortKnoepfe(optionen)}
     <div id="aufloesung" class="aufloesung"></div>`);
   bilderEinsetzen();
 
   let erledigt = false;
-  // gewaehlt: Index der gewählten Antwort, eingetippter Text bzw. Liste der Texte; null = Zeit abgelaufen
+  // gewaehlt: Index der gewählten Antwort, eingetippter Text bzw. gewählte Nummern je Begriff; null = Zeit abgelaufen
   const aufloesen = async (gewaehlt) => {
     if (erledigt) return;
     erledigt = true;
@@ -449,7 +466,7 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
     }
 
     const pruefung = !loesung ? null
-      : beschriften ? beschriftenPruefen(gewaehlt, loesung)
+      : beschriften ? beschriftenPruefen(gewaehlt, loesung, frage.begriffe)
       : eingabe && gewaehlt != null ? eingabePruefen(gewaehlt, loesung) : null;
     const richtig = eingabe || beschriften
       ? gewaehlt != null && !!(pruefung && pruefung.richtig)
@@ -461,7 +478,7 @@ function frageZeigen({ frage, titel, info, sekunden, beiAntwort, weiter, serieVo
     const treffer = beschriften && pruefung ? pruefung.felder.filter((f) => f.ok).length : 0;
     const text = gewaehlt == null ? '⏱ Zeit abgelaufen'
       : richtig ? (pruefung && !pruefung.exakt ? '✓ Richtig! (kleine Tippfehler toleriert)' : '✓ Richtig!')
-      : beschriften && pruefung ? `✗ ${treffer} von ${pruefung.felder.length} Feldern richtig` : '✗ Leider falsch';
+      : beschriften && pruefung ? `✗ ${treffer} von ${pruefung.felder.length} Begriffen richtig` : '✗ Leider falsch';
     box.innerHTML = `
       <p class="meldung ${richtig ? 'ok' : 'nok'}">${text}</p>
       ${richtig ? `<p class="mitte">${serieText(serieVorher + 1)}</p>` : ''}
@@ -1421,7 +1438,8 @@ function liveTick(live) {
     loesungenLaden([d.fragen[i]])
       .then(([l]) => {
         if (live.phase !== phase || !l) return;
-        if (FRAGEN_TEXT.get(d.fragen[i])?.typ === 'beschriften') beschriftenMarkieren(beschriftenPruefen(null, l));
+        const f = FRAGEN_TEXT.get(d.fragen[i]);
+        if (f?.typ === 'beschriften') beschriftenMarkieren(beschriftenPruefen(null, l, f.begriffe));
         else markieren(live.optionen, -1, l.richtig);
       })
       .catch(fehler);
@@ -1627,7 +1645,7 @@ function liveFrage(live) {
     ${liveDauer(duell) ? '<div class="timer"><div class="timer-balken"></div></div>' : ''}
     <div class="karte frage">${esc(frage ? frage.frage : 'Frage nicht mehr vorhanden')}</div>
     ${frage ? bildPlatz(frage.bild) : ''}
-    ${beschriften ? beschriftenFeld(frage.antworten) : eingabe ? eingabeFeld() : antwortKnoepfe(live.optionen)}
+    ${beschriften ? beschriftenFeld(frage) : eingabe ? eingabeFeld() : antwortKnoepfe(live.optionen)}
     <p class="meldung" id="meine-meldung"></p>
     <p class="gegner-status" id="gegner-status"></p>
     <button class="link gedaempft" id="aufgeben">Aufgeben</button>`);
@@ -1643,10 +1661,10 @@ function liveFrage(live) {
   }
   app.querySelectorAll('.antwort').forEach((k, idx) => (k.onclick = () => liveAntworten(live, frage, idx)));
   if (eingabe) eingabeAktivieren((text) => liveAntworten(live, frage, text));
-  if (beschriften) beschriftenAktivieren((texte) => liveAntworten(live, frage, texte));
+  if (beschriften) beschriftenAktivieren((wahl) => liveAntworten(live, frage, wahl));
 }
 
-// auswahl: Index der gewählten Antwort, eingetippter Text oder Liste der Texte (Beschriften)
+// auswahl: Index der gewählten Antwort, eingetippter Text oder gewählte Nummern je Begriff (Beschriften)
 async function liveAntworten(live, frage, auswahl) {
   if (live.gewaehlt != null) return;
   const d = live.duell.daten;
@@ -1661,7 +1679,7 @@ async function liveAntworten(live, frage, auswahl) {
     const [loesung] = await loesungenLaden([frage.id]);
     const eingabe = frage.typ === 'eingabe';
     const beschriften = frage.typ === 'beschriften';
-    const pruefung = beschriften ? beschriftenPruefen(auswahl, loesung) : null;
+    const pruefung = beschriften ? beschriftenPruefen(auswahl, loesung, frage.begriffe) : null;
     const richtig = beschriften ? pruefung.richtig : eingabe ? eingabePruefen(auswahl, loesung).richtig : !!loesung && live.optionen[auswahl] === loesung.richtig;
     const p = richtig ? livePunkte(ms, dauer) : 0;
     if (live.phase === phase) {

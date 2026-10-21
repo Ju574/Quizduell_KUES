@@ -398,13 +398,18 @@ textarea {
 
 /* Beschriften-Fragen: Nummer + Eingabefeld, Lösung darunter */
 .beschriften { display: flex; flex-direction: column; gap: 8px; }
-.beschriften .beschriften-zeile { display: grid; grid-template-columns: 2.2em 1fr; align-items: center; gap: 4px 8px; margin: 0; }
-.beschriften .nr { display: flex; align-items: center; justify-content: center; width: 2em; height: 2em; border-radius: 50%; background: var(--primaer); color: #fff; font-weight: 700; }
-.beschriften input { font-size: 1rem; padding: 10px 12px; border-width: 2px; background: var(--flaeche); }
-.beschriften input:focus { outline: none; border-color: var(--primaer); }
-.beschriften input.richtig { border-color: var(--ok); background: var(--ok-bg); }
-.beschriften input.falsch { border-color: var(--nok); background: var(--nok-bg); }
-.beschriften .soll { grid-column: 2; }
+.beschriften .beschriften-zeile { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border: 2px solid var(--rand); border-radius: 10px; background: var(--flaeche); }
+.beschriften .begriff { flex: 1 1 12em; font-weight: 600; }
+.beschriften .nummern { display: flex; flex-wrap: wrap; gap: 6px; }
+.beschriften .nr-wahl { min-width: 2.4em; height: 2.4em; padding: 0 6px; border-radius: 50%; border: 2px solid var(--primaer); background: transparent; color: var(--primaer); font-weight: 700; font-size: 0.95rem; cursor: pointer; }
+.beschriften .nr-wahl.vergeben { opacity: 0.35; }
+.beschriften .nr-wahl.gewaehlt { background: var(--primaer); color: #fff; opacity: 1; }
+.beschriften .nr-wahl:disabled { cursor: default; }
+.beschriften .beschriften-zeile.richtig { border-color: var(--ok); background: var(--ok-bg); }
+.beschriften .beschriften-zeile.falsch { border-color: var(--nok); background: var(--nok-bg); }
+.beschriften .falsch .nr-wahl.gewaehlt { background: var(--nok); border-color: var(--nok); }
+.beschriften .nr-wahl.soll-nr { box-shadow: 0 0 0 3px var(--ok); }
+.beschriften .soll { flex-basis: 100%; }
 .beschriften .soll:empty { display: none; }
 
 /* ---------- Gimmicks ---------- */
