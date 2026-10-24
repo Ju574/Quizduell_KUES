@@ -29,6 +29,9 @@ let lernstand = new Map();       // frage_id → { richtig, falsch, serie }
 let spielerAbo = null;
 let onlineAbo = null;
 let online = new Set();          // IDs der Spieler, die gerade die Seite offen haben
+let chatKanal = null;            // { anstossen, ende } – meldet Änderungen im Gruppenchat
+let chatNeu = 0;                 // ungelesene Chat-Nachrichten anderer
+let chatAktualisieren = null;    // gesetzt, solange der Chat offen ist
 const namen = new Map();         // spieler-id → Anzeigename
 const aufraeumer = [];
 
@@ -676,6 +679,7 @@ function konfetti(dauer = 2500, anzahl = 160) {
 // Erst der Finisher (effekte.js), danach Sieg: Konfetti + Jubel · Unentschieden: etwas Konfetti · Niederlage: Wackeln.
 // Einmal pro Duell und Gerät.
 async function ergebnisEffekt(duell, element) {
+  ergebnisPosten(duell);
   if (!element || !erstesMal('pruefi-jubel-' + duell.id)) return;
   const { ergebnis } = duellErgebnis(duell);
   const spieler = teilnehmer(duell);
@@ -713,6 +717,7 @@ const ROUTEN = [
   [/^#\/lernen$/, () => lernenAuswahl()],
   [/^#\/statistik$/, () => statistik()],
   [/^#\/rangliste$/, () => rangliste()],
+  [/^#\/chat$/, () => chatAnsicht()],
   [/^#\/admin$/, () => adminAnsicht()],
   [/^#\/admin\/fragen$/, () => adminFragen()],
 ];
@@ -841,6 +846,10 @@ async function anmelden(spieler) {
     online = ids;
     onlineAktualisieren();
   });
+  if (chatKanal) chatKanal.ende();
+  chatKanal = DB.chatAbo(() => (chatAktualisieren ? chatAktualisieren() : chatZaehlen()));
+  chatNeu = 0;
+  chatZaehlen();
   topbarAktualisieren();
   route();
 }
@@ -851,6 +860,8 @@ function abmelden() {
   spielerAbo = null;
   if (onlineAbo) onlineAbo();
   onlineAbo = null;
+  if (chatKanal) chatKanal.ende();
+  chatKanal = null;
   online = new Set();
   ich = null;
   location.hash = '#/';
@@ -860,12 +871,14 @@ function abmelden() {
 function topbarAktualisieren() {
   const el = document.getElementById('topbar-rechts');
   const tonKnopf = () => `<button class="link ton-knopf" id="ton" title="Ton an/aus" aria-label="Ton ${Ton.an ? 'aus' : 'an'}schalten">${Ton.an ? '🔊' : '🔇'}</button>`;
-  el.innerHTML = tonKnopf() + (ich ? `<span class="topbar-name">${esc(ich.name)}</span><button class="link" id="abmelden">Abmelden</button>` : '');
+  const chatKnopf = `<a class="link chat-knopf" href="#/chat" title="Gruppenchat" aria-label="Gruppenchat">💬<span class="chat-zahl" data-chat-zahl hidden></span></a>`;
+  el.innerHTML = tonKnopf() + (ich ? `${chatKnopf}<span class="topbar-name">${esc(ich.name)}</span><button class="link" id="abmelden">Abmelden</button>` : '');
   el.querySelector('#ton').onclick = () => {
     if (Ton.umschalten()) setTimeout(() => Ton.spiel('pling'), 50); // kurz bestätigen, dass Ton an ist
     topbarAktualisieren();
   };
   if (ich) el.querySelector('#abmelden').onclick = abmelden;
+  chatZahlZeigen();
 }
 
 // ===== Live-Einladungen =====
@@ -921,6 +934,7 @@ async function startseite() {
       <a class="kachel" href="#/lernen"><span>📚</span>Lernen</a>
       <a class="kachel" href="#/statistik"><span>📊</span>Statistik</a>
       <a class="kachel" href="#/rangliste"><span>🏆</span>Rangliste</a>
+      <a class="kachel breit" href="#/chat"><span>💬</span>Gruppenchat<b class="chat-zahl" data-chat-zahl hidden></b></a>
     </div>
     <p class="klein gedaempft mitte">${sicher} von ${FRAGEN_LISTE.length} Fragen sicher · ${KATEGORIEN.length} Kategorien</p>
     ${!FRAGEN_LISTE.length ? '<p class="warnung mitte">Es sind noch keine Fragen in der Datenbank.</p>' : ''}
@@ -934,6 +948,7 @@ async function startseite() {
     })}
     ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}
     <p class="mitte fusszeile"><a class="link gedaempft klein" href="#/admin">Admin</a></p>`);
+  chatZahlZeigen();
 }
 
 // ===== Themen-Auswahl (Kategorien und Rechenaufgaben ausschließen) =====
@@ -1498,6 +1513,7 @@ function liveTick(live) {
     const m = app.querySelector('#meine-meldung');
     if (m) m.innerHTML = '<span class="nok">⏱ Zeit abgelaufen</span>';
     Ton.spiel('falsch');
+    lernstandBuchen(d.fragen[i], false); // zählt im Lernstand als falsch, wie im Rundenduell
     const phase = live.phase;
     loesungenLaden([d.fragen[i]])
       .then(([l]) => {
@@ -2002,6 +2018,218 @@ async function statistik() {
     <a class="btn primaer" href="#/lernen">Jetzt lernen</a>`);
 }
 
+// ===== Gruppenchat =====
+// Nachrichten gibt es nur mit Gruppen-Passwort (chat_holen). Über chatKanal kommt nur ein Anstoß „es hat sich was geändert“.
+const CHAT_REAKTIONEN = ['👍', '😂', '🔥', '😮', '💯'];
+const chatGelesenSchluessel = () => 'pruefi-chat-gelesen-' + ich.id;
+const chatGelesen = () => Number(gespeichert(chatGelesenSchluessel())) || 0;
+
+function chatZahlZeigen() {
+  document.querySelectorAll('[data-chat-zahl]').forEach((el) => {
+    el.textContent = chatNeu > 99 ? '99+' : String(chatNeu);
+    el.hidden = !chatNeu;
+  });
+}
+
+async function chatZaehlen() {
+  if (!ich || !passwort) return;
+  try {
+    chatNeu = await DB.chatUngelesen(passwort, chatGelesen(), ich.id);
+    chatZahlZeigen();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// Ergebnis eines frisch beendeten Duells in den Chat (einmal pro Gerät; doppelte Posts verwirft die Datenbank)
+function ergebnisPosten(duell) {
+  if (duell.status !== 'beendet' || Date.now() - new Date(duell.aktualisiert).getTime() > 24 * 3600000) return;
+  if (!erstesMal('pruefi-chat-ergebnis-' + duell.id)) return;
+  (teilnehmer(duell).some((s) => !namen.has(s)) ? ladeSpieler() : Promise.resolve())
+    .then(() => DB.chatErgebnis(passwort, duell.id, ergebnisNachricht(duell)))
+    .then(() => {
+      if (chatKanal) chatKanal.anstossen();
+      if (chatAktualisieren) chatAktualisieren();
+    })
+    .catch((e) => console.error(e));
+}
+
+function ergebnisNachricht(duell) {
+  const { punkte, ergebnis } = duellErgebnis(duell);
+  const aufgegeben = duell.daten.aufgegeben;
+  const spieler = teilnehmer(duell).sort((a, b) => (a === aufgegeben) - (b === aufgegeben) || punkte[b] - punkte[a]);
+  const wo = duell.modus === 'live' ? 'im Live-Battle' : 'im Rundenduell';
+  const stand = spieler.map((s) => punkte[s]).join(' : ');
+  const sieger = spieler.filter((s) => ergebnis[s] !== 'n').map(nameVon);
+  const verlierer = spieler.filter((s) => ergebnis[s] === 'n').map(nameVon);
+  const zusatz = aufgegeben ? ` – ${nameVon(aufgegeben)} hat aufgegeben` : '';
+  if (!verlierer.length) return `🤝 Unentschieden ${wo}: ${sieger.join(' & ')} (${stand})${zusatz}`;
+  if (sieger.length > 1) return `🤝 ${sieger.join(' & ')} teilen sich den Sieg ${wo} gegen ${verlierer.join(' & ')} (${stand})${zusatz}`;
+  return `🏆 ${sieger[0]} besiegt ${verlierer.join(' & ')} ${wo} (${stand})${zusatz}`;
+}
+
+async function chatAnsicht() {
+  ansicht = 'chat';
+  const adminPw = gespeichertSitzung('pruefi-admin');
+  let anzahl = 50;
+  let nachrichten = [];
+  let auswahlOffen = null; // Nachricht, an der gerade die Reaktions-Auswahl offen ist
+  show(`
+    <h2>💬 Gruppenchat</h2>
+    <div class="chat-verlauf" id="verlauf"><p class="leer">Lädt …</p></div>
+    <form id="chat-form" class="chat-eingabe">
+      <textarea id="chat-text" rows="1" maxlength="500" placeholder="Nachricht schreiben …" aria-label="Nachricht"></textarea>
+      <button class="btn primaer klein" id="chat-senden">Senden</button>
+    </form>`);
+  const verlauf = app.querySelector('#verlauf');
+  const feld = app.querySelector('#chat-text');
+
+  const tag = (iso) => {
+    const d = new Date(iso);
+    if (d.toDateString() === new Date().toDateString()) return 'Heute';
+    if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return 'Gestern';
+    return d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  };
+  const uhrzeit = (iso) => new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const reaktionen = (n) =>
+    Object.entries(n.reaktionen || {})
+      .filter(([, wer]) => wer.length)
+      .map(([emoji, wer]) => `<button class="reaktion ${wer.includes(ich.id) ? 'meine' : ''}" data-reagieren="${n.id}" data-emoji="${emoji}" title="${esc(wer.map(nameVon).join(', '))}">${emoji} ${wer.length}</button>`)
+      .join('');
+
+  const nachricht = (n, vorher) => {
+    const eigene = n.spieler === ich.id;
+    const ergebnis = n.art === 'ergebnis';
+    // Name nur über der ersten von mehreren Nachrichten derselben Person (innerhalb von 5 Minuten)
+    const folge = vorher && vorher.spieler === n.spieler && vorher.art === n.art && new Date(n.erstellt) - new Date(vorher.erstellt) < 300000;
+    return `
+      <div class="chat-nachricht ${eigene ? 'eigene' : ''} ${ergebnis ? 'ergebnis' : ''}">
+        ${!eigene && !ergebnis && !folge ? `<div class="chat-name">${onlinePunkt(n.spieler)}${esc(nameVon(n.spieler))}</div>` : ''}
+        <div class="chat-blase">${esc(n.text)}</div>
+        <div class="chat-fuss">
+          <span class="chat-zeit">${uhrzeit(n.erstellt)}</span>
+          ${reaktionen(n)}
+          <button class="chat-mini" data-auswahl="${n.id}" aria-label="Reagieren" title="Reagieren">☺+</button>
+          ${adminPw ? `<button class="chat-mini" data-loeschen="${n.id}" aria-label="Nachricht löschen" title="Löschen (Admin)">🗑</button>` : ''}
+        </div>
+        ${auswahlOffen === n.id ? `<div class="chat-auswahl">${CHAT_REAKTIONEN.map((e) => `<button data-reagieren="${n.id}" data-emoji="${e}">${e}</button>`).join('')}</div>` : ''}
+      </div>`;
+  };
+
+  // modus: 'unten' = zur neuesten Nachricht, 'aelter' = Position halten, während oben Ältere dazukommen,
+  // sonst unten bleiben, wenn man schon unten war, und die Position halten, wenn man hochgescrollt hat
+  const zeichnen = (modus) => {
+    const warUnten = verlauf.scrollHeight - verlauf.scrollTop - verlauf.clientHeight < 80;
+    const abstandUnten = verlauf.scrollHeight - verlauf.scrollTop;
+    const oben = verlauf.scrollTop;
+    let html = nachrichten.length >= anzahl ? '<button class="link klein chat-mehr" data-mehr>Ältere Nachrichten laden</button>' : '';
+    nachrichten.forEach((n, i) => {
+      const vorher = nachrichten[i - 1];
+      const neuerTag = !vorher || tag(vorher.erstellt) !== tag(n.erstellt);
+      if (neuerTag) html += `<div class="chat-tag">${tag(n.erstellt)}</div>`;
+      html += nachricht(n, neuerTag ? null : vorher);
+    });
+    verlauf.innerHTML = html || '<p class="leer">Noch keine Nachrichten – schreib die erste! 👋</p>';
+    if (modus === 'unten' || (modus !== 'aelter' && warUnten)) verlauf.scrollTop = verlauf.scrollHeight;
+    else if (modus === 'aelter') verlauf.scrollTop = verlauf.scrollHeight - abstandUnten;
+    else verlauf.scrollTop = oben;
+  };
+
+  const laden = async (modus) => {
+    const neu = await DB.chatHolen(passwort, anzahl);
+    const unbekannt = (id) => id && id !== ich.id && !namen.has(id);
+    if (neu.some((n) => unbekannt(n.spieler) || Object.values(n.reaktionen || {}).flat().some(unbekannt))) await ladeSpieler();
+    if (ansicht !== 'chat') return;
+    nachrichten = neu;
+    zeichnen(modus);
+    const hoechste = nachrichten.length ? nachrichten[nachrichten.length - 1].id : 0;
+    if (hoechste > chatGelesen()) speichern(chatGelesenSchluessel(), String(hoechste));
+    chatNeu = 0;
+    chatZahlZeigen();
+  };
+
+  chatAktualisieren = () => laden().catch((e) => console.error(e));
+  const takt = setInterval(chatAktualisieren, 20000); // falls ein Anstoß verloren geht (z. B. nach Standby)
+  const sichtbar = () => document.visibilityState === 'visible' && chatAktualisieren();
+  document.addEventListener('visibilitychange', sichtbar);
+  beimVerlassen(() => {
+    chatAktualisieren = null;
+    clearInterval(takt);
+    document.removeEventListener('visibilitychange', sichtbar);
+  });
+  const anstossen = () => chatKanal && chatKanal.anstossen();
+
+  verlauf.addEventListener('click', async (e) => {
+    const knopf = e.target.closest('button');
+    if (!knopf) return;
+    try {
+      if (knopf.dataset.mehr != null) {
+        anzahl += 50;
+        await laden('aelter');
+      } else if (knopf.dataset.auswahl) {
+        const id = Number(knopf.dataset.auswahl);
+        auswahlOffen = auswahlOffen === id ? null : id;
+        zeichnen();
+      } else if (knopf.dataset.reagieren) {
+        const id = Number(knopf.dataset.reagieren);
+        const emoji = knopf.dataset.emoji;
+        // sofort anzeigen, dann speichern
+        const n = nachrichten.find((x) => x.id === id);
+        if (n) {
+          n.reaktionen = n.reaktionen || {};
+          const wer = n.reaktionen[emoji] || [];
+          n.reaktionen[emoji] = wer.includes(ich.id) ? wer.filter((x) => x !== ich.id) : [...wer, ich.id];
+        }
+        auswahlOffen = null;
+        zeichnen();
+        await DB.chatReagieren(passwort, id, ich.id, emoji);
+        anstossen();
+      } else if (knopf.dataset.loeschen) {
+        if (!confirm('Diese Nachricht für alle löschen?')) return;
+        await DB.adminChatLoeschen(adminPw, Number(knopf.dataset.loeschen));
+        anstossen();
+        await laden();
+      }
+    } catch (err) {
+      fehler(err);
+    }
+  });
+
+  const hoeheAnpassen = () => {
+    feld.style.height = 'auto';
+    feld.style.height = Math.min(feld.scrollHeight, 120) + 'px';
+  };
+  feld.addEventListener('input', hoeheAnpassen);
+  // Enter sendet, Umschalt+Enter macht eine neue Zeile
+  feld.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      app.querySelector('#chat-senden').click();
+    }
+  });
+  on('#chat-form', async (e) => {
+    e.preventDefault();
+    const text = feld.value.trim();
+    if (!text) return;
+    const knopf = app.querySelector('#chat-senden');
+    knopf.disabled = true;
+    try {
+      await DB.chatSenden(passwort, ich.id, text);
+      feld.value = '';
+      hoeheAnpassen();
+      anstossen();
+      await laden('unten');
+    } catch (err) {
+      fehler(err);
+    } finally {
+      knopf.disabled = false;
+      feld.focus();
+    }
+  }, 'submit');
+
+  await laden('unten');
+}
+
 // ===== Rangliste =====
 async function rangliste(filter = 'alle') {
   const [duelle] = await Promise.all([DB.beendeteDuelle(), ladeSpieler()]);
@@ -2088,6 +2316,7 @@ async function adminAnsicht() {
   show(`
     <h2>Admin</h2>
     <a class="btn primaer" href="#/admin/fragen">🗂 Alle Fragen durchsehen</a>
+    <a class="btn" href="#/chat">💬 Chat moderieren (🗑 an jeder Nachricht)</a>
     <h3>🎬 Effekte testen</h3>
     <div class="karte stapel">
       <div class="klein gedaempft">Finisher</div>

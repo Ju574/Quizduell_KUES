@@ -515,3 +515,131 @@ revoke execute on function public.bild_holen(text, text) from public;
 revoke execute on function public.bilder_importieren(text, jsonb) from public;
 grant execute on function public.bild_holen(text, text) to anon, authenticated;
 grant execute on function public.bilder_importieren(text, jsonb) to anon, authenticated;
+
+-- ===== Gruppenchat =====
+-- Nur über Funktionen mit Gruppen-Passwort erreichbar (die Tabelle selbst ist für anon gesperrt).
+-- Neue Nachrichten meldet die App per Realtime-Broadcast nur als „Anstoß“ ohne Inhalt; gelesen wird per chat_holen.
+
+create table if not exists public.chat (
+  id bigint generated always as identity primary key,
+  spieler text,                                   -- null bei automatischen Ergebnis-Nachrichten
+  text text not null check (char_length(text) between 1 and 500),
+  art text not null default 'text' check (art in ('text', 'ergebnis')),
+  duell uuid unique,                              -- Ergebnis-Nachricht: höchstens eine pro Duell
+  reaktionen jsonb not null default '{}',         -- { "👍": ["spieler-id", …] }
+  erstellt timestamptz not null default now()
+);
+alter table public.chat enable row level security;
+revoke all on public.chat from anon, authenticated;
+
+-- Die neuesten p_anzahl Nachrichten (aufsteigend sortiert)
+create or replace function public.chat_holen(p_passwort text, p_anzahl int)
+returns setof public.chat
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  return query select * from (select * from public.chat order by id desc limit least(greatest(p_anzahl, 1), 500)) c order by c.id;
+end $$;
+
+-- Anzahl Nachrichten anderer nach der zuletzt gelesenen
+create or replace function public.chat_ungelesen(p_passwort text, p_nach bigint, p_spieler text)
+returns int
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  return (select count(*) from public.chat where id > coalesce(p_nach, 0) and spieler is distinct from p_spieler);
+end $$;
+
+create or replace function public.chat_senden(p_passwort text, p_spieler text, p_text text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  if not exists (select 1 from public.spieler where id = p_spieler) then
+    raise exception 'Unbekannter Spieler';
+  end if;
+  insert into public.chat (spieler, text) values (p_spieler, left(trim(p_text), 500));
+end $$;
+
+-- Ergebnis eines beendeten Duells posten (mehrfaches Posten desselben Duells wird ignoriert)
+create or replace function public.chat_ergebnis(p_passwort text, p_duell uuid, p_text text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  if not exists (select 1 from public.duelle where id = p_duell and status = 'beendet') then
+    raise exception 'Duell ist nicht beendet';
+  end if;
+  insert into public.chat (text, art, duell) values (left(trim(p_text), 500), 'ergebnis', p_duell)
+  on conflict (duell) do nothing;
+end $$;
+
+-- Reaktion an-/abschalten (nur feste Emojis)
+create or replace function public.chat_reagieren(p_passwort text, p_id bigint, p_spieler text, p_emoji text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  if p_emoji not in ('👍', '😂', '🔥', '😮', '💯') then
+    raise exception 'Unbekannte Reaktion';
+  end if;
+  update public.chat set reaktionen =
+    case when coalesce(reaktionen -> p_emoji, '[]') ? p_spieler
+      then jsonb_set(reaktionen, array[p_emoji], (reaktionen -> p_emoji) - p_spieler)
+      else jsonb_set(reaktionen, array[p_emoji], coalesce(reaktionen -> p_emoji, '[]') || to_jsonb(p_spieler))
+    end
+  where id = p_id;
+end $$;
+
+create or replace function public.admin_chat_loeschen(p_passwort text, p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  delete from public.chat where id = p_id;
+end $$;
+
+revoke execute on function public.chat_holen(text, int) from public;
+revoke execute on function public.chat_ungelesen(text, bigint, text) from public;
+revoke execute on function public.chat_senden(text, text, text) from public;
+revoke execute on function public.chat_ergebnis(text, uuid, text) from public;
+revoke execute on function public.chat_reagieren(text, bigint, text, text) from public;
+revoke execute on function public.admin_chat_loeschen(text, bigint) from public;
+grant execute on function public.chat_holen(text, int) to anon, authenticated;
+grant execute on function public.chat_ungelesen(text, bigint, text) to anon, authenticated;
+grant execute on function public.chat_senden(text, text, text) to anon, authenticated;
+grant execute on function public.chat_ergebnis(text, uuid, text) to anon, authenticated;
+grant execute on function public.chat_reagieren(text, bigint, text, text) to anon, authenticated;
+grant execute on function public.admin_chat_loeschen(text, bigint) to anon, authenticated;

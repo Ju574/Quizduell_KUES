@@ -17,6 +17,10 @@
 //   adminLernstandZuruecksetzen(pw, spielerId)
 //   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
 //   adminFragen(pw) → alle Fragen inkl. Lösungen, adminFrageMarkieren(pw, id, wert)
+//   chatHolen(pw, anzahl) → neueste Nachrichten [{ id, spieler, text, art, reaktionen, erstellt }] aufsteigend,
+//   chatUngelesen(pw, nachId, spielerId) → Anzahl, chatSenden(pw, spielerId, text), chatErgebnis(pw, duellId, text),
+//   chatReagieren(pw, id, spielerId, emoji), adminChatLoeschen(pw, id),
+//   chatAbo(callback) → { anstossen(), ende() } – callback, sobald sich im Chat etwas geändert hat
 
 // Mit ?demo in der Adresse läuft immer der Demo-Modus (zum Testen, ohne die echte Datenbank anzufassen).
 const DB = (() => {
@@ -144,6 +148,34 @@ function supabaseBackend(cfg) {
     adminFragen: (pw) => alle(() => sb.rpc('admin_fragen', { p_passwort: pw })),
     async adminFrageMarkieren(pw, id, wert) {
       pruefe(await sb.rpc('admin_frage_markieren', { p_passwort: pw, p_id: id, p_wert: wert }));
+    },
+    async chatHolen(pw, anzahl) {
+      return pruefe(await sb.rpc('chat_holen', { p_passwort: pw, p_anzahl: anzahl }));
+    },
+    async chatUngelesen(pw, nachId, spielerId) {
+      return pruefe(await sb.rpc('chat_ungelesen', { p_passwort: pw, p_nach: nachId, p_spieler: spielerId }));
+    },
+    async chatSenden(pw, spielerId, text) {
+      pruefe(await sb.rpc('chat_senden', { p_passwort: pw, p_spieler: spielerId, p_text: text }));
+    },
+    async chatErgebnis(pw, duellId, text) {
+      pruefe(await sb.rpc('chat_ergebnis', { p_passwort: pw, p_duell: duellId, p_text: text }));
+    },
+    async chatReagieren(pw, id, spielerId, emoji) {
+      pruefe(await sb.rpc('chat_reagieren', { p_passwort: pw, p_id: id, p_spieler: spielerId, p_emoji: emoji }));
+    },
+    async adminChatLoeschen(pw, id) {
+      pruefe(await sb.rpc('admin_chat_loeschen', { p_passwort: pw, p_id: id }));
+    },
+    // Broadcast ohne Inhalt – die Nachrichten selbst gibt es nur mit Gruppen-Passwort über chat_holen
+    chatAbo(callback) {
+      const kanal = sb.channel('chat', { config: { broadcast: { self: false } } });
+      kanal.on('broadcast', { event: 'neu' }, () => callback());
+      kanal.subscribe();
+      return {
+        anstossen: () => kanal.send({ type: 'broadcast', event: 'neu', payload: {} }),
+        ende: () => sb.removeChannel(kanal),
+      };
     },
   };
 }
@@ -368,6 +400,58 @@ function demoBackend() {
       const db = lesen();
       db.markiert = (db.markiert || []).filter((x) => x !== id).concat(wert ? [id] : []);
       schreiben(db);
+    },
+    async chatHolen(pw, anzahl) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      return kopie((lesen().chat || []).slice(-anzahl));
+    },
+    async chatUngelesen(pw, nachId, spielerId) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      return (lesen().chat || []).filter((n) => n.id > (nachId || 0) && n.spieler !== spielerId).length;
+    },
+    async chatSenden(pw, spielerId, text) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      const db = lesen();
+      db.chat = db.chat || [];
+      db.chat.push({ id: (db.chat.at(-1)?.id || 0) + 1, spieler: spielerId, text: text.trim().slice(0, 500), art: 'text', duell: null, reaktionen: {}, erstellt: jetzt() });
+      schreiben(db);
+    },
+    async chatErgebnis(pw, duellId, text) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      const db = lesen();
+      db.chat = db.chat || [];
+      if (db.chat.some((n) => n.duell === duellId)) return;
+      db.chat.push({ id: (db.chat.at(-1)?.id || 0) + 1, spieler: null, text: text.slice(0, 500), art: 'ergebnis', duell: duellId, reaktionen: {}, erstellt: jetzt() });
+      schreiben(db);
+    },
+    async chatReagieren(pw, id, spielerId, emoji) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      const db = lesen();
+      const n = (db.chat || []).find((x) => x.id === id);
+      if (!n) return;
+      const liste = n.reaktionen[emoji] || [];
+      n.reaktionen[emoji] = liste.includes(spielerId) ? liste.filter((x) => x !== spielerId) : [...liste, spielerId];
+      schreiben(db);
+    },
+    async adminChatLoeschen(pw, id) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      const db = lesen();
+      db.chat = (db.chat || []).filter((x) => x.id !== id);
+      schreiben(db);
+    },
+    // Andere Tabs (= andere Spieler im Demo-Modus) bekommen Änderungen über das storage-Ereignis mit
+    chatAbo(callback) {
+      let letzter = JSON.stringify(lesen().chat || []);
+      const beiAenderung = (e) => {
+        if (e.key !== KEY) return;
+        const stand = JSON.stringify(lesen().chat || []);
+        if (stand !== letzter) {
+          letzter = stand;
+          callback();
+        }
+      };
+      window.addEventListener('storage', beiAenderung);
+      return { anstossen: () => {}, ende: () => window.removeEventListener('storage', beiAenderung) };
     },
   };
 }
