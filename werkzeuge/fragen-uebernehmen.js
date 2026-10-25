@@ -38,9 +38,10 @@ if (fehler.length) {
   process.exit(1);
 }
 
-const kuerzel = neu[0].id.replace(/[^-]+$/, '');
+// Alle Kürzel der Datei (z. B. „ak-r24-“, „ak-a25-“), nicht nur das der ersten Frage
+const kuerzel = [...new Set(neu.map((f) => f.id.replace(/[^-]+$/, '')))];
 const bisher = fs.existsSync(zielDatei) ? JSON.parse(fs.readFileSync(zielDatei, 'utf8')) : [];
-const behalten = bisher.filter((f) => !f.id.startsWith(kuerzel));
+const behalten = bisher.filter((f) => !kuerzel.some((k) => f.id.startsWith(k)));
 fs.writeFileSync(zielDatei, JSON.stringify([...behalten, ...neu], null, 2) + '\n');
 
 const proThema = {};
