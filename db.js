@@ -9,12 +9,13 @@
 //   duelleVon(spielerId), beendeteDuelle()
 //   lernstandBuchen(spielerId, frageId, richtig), lernstandVon(spielerId)
 //   abonniereDuell(id, callback), abonniereSpieler(spielerId, callback) → Funktion zum Abmelden
-//   passwortPruefen(pw), fragenKatalog(pw) → [{ id, kategorie, rechnung }]
+//   passwortPruefen(pw), sitzungAnlegen(pw) → Sitzungs-Schlüssel (gilt danach überall statt des Passworts),
+//   fragenKatalog(pw) → [{ id, kategorie, rechnung }]
 //   fragenHolen(pw, ids) → [{ id, kategorie, frage, typ, antworten, begriffe, bild }]   (max. 20, ohne Lösung)
 //   loesungenHolen(pw, ids) → [{ id, richtig, erklaerung, alternativen, bild_nach }]   (max. 20)
 //   bildHolen(pw, bildId) → Adresse für <img src> (Gruppen- oder Admin-Passwort)
 //   alleDuelle(), adminPruefen(pw), adminSpielerLoeschen(pw, id), adminDuellLoeschen(pw, id),
-//   adminLernstandZuruecksetzen(pw, spielerId)
+//   adminLernstandZuruecksetzen(pw, spielerId), adminSitzungenLoeschen(pw) → Anzahl abgemeldeter Geräte
 //   frageMelden(pw, frageId, spielerId, grund, kommentar), adminMeldungen(pw), adminMeldungErledigen(pw, id)
 //   adminFragen(pw) → alle Fragen inkl. Lösungen, adminFrageMarkieren(pw, id, wert)
 //   chatHolen(pw, anzahl) → neueste Nachrichten [{ id, spieler, text, art, reaktionen, erstellt }] aufsteigend,
@@ -102,6 +103,9 @@ function supabaseBackend(cfg) {
     async passwortPruefen(pw) {
       return pruefe(await sb.rpc('passwort_ok', { p_passwort: pw }));
     },
+    async sitzungAnlegen(pw) {
+      return pruefe(await sb.rpc('sitzung_anlegen', { p_passwort: pw }));
+    },
     fragenKatalog: (pw) => alle(() => sb.rpc('fragen_katalog', { p_passwort: pw })),
     async fragenHolen(pw, ids) {
       return pruefe(await sb.rpc('fragen_holen', { p_passwort: pw, p_ids: ids }));
@@ -135,6 +139,9 @@ function supabaseBackend(cfg) {
     },
     async adminLernstandZuruecksetzen(pw, id) {
       pruefe(await sb.rpc('admin_lernstand_zuruecksetzen', { p_passwort: pw, p_spieler: id }));
+    },
+    async adminSitzungenLoeschen(pw) {
+      return pruefe(await sb.rpc('admin_sitzungen_loeschen', { p_passwort: pw }));
     },
     async frageMelden(pw, frageId, spielerId, grund, kommentar) {
       pruefe(await sb.rpc('frage_melden', { p_passwort: pw, p_frage_id: frageId, p_spieler: spielerId, p_grund: grund, p_kommentar: kommentar }));
@@ -289,6 +296,11 @@ function demoBackend() {
     async passwortPruefen(pw) {
       return pw === 'demo';
     },
+    // Im Demo-Modus ist der „Schlüssel“ einfach wieder das Demo-Passwort
+    async sitzungAnlegen(pw) {
+      if (pw !== 'demo') throw new Error('Falsches Gruppen-Passwort');
+      return 'demo';
+    },
     async fragenKatalog(pw) {
       return (await demoFragen(pw)).map(({ id, kategorie, rechnung }) => ({ id, kategorie, rechnung: !!rechnung }));
     },
@@ -359,6 +371,10 @@ function demoBackend() {
       const db = lesen();
       db.duelle = db.duelle.filter((d) => d.id !== id);
       schreiben(db);
+    },
+    async adminSitzungenLoeschen(pw) {
+      if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');
+      return 0;
     },
     async adminLernstandZuruecksetzen(pw, id) {
       if (pw !== 'admin') throw new Error('Falsches Admin-Passwort');

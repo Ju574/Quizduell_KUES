@@ -643,3 +643,77 @@ grant execute on function public.chat_senden(text, text, text) to anon, authenti
 grant execute on function public.chat_ergebnis(text, uuid, text) to anon, authenticated;
 grant execute on function public.chat_reagieren(text, bigint, text, text) to anon, authenticated;
 grant execute on function public.admin_chat_loeschen(text, bigint) to anon, authenticated;
+
+-- ===== Sitzungs-Schlüssel =====
+-- Geräte speichern nicht das Gruppen-Passwort, sondern einen zufälligen Schlüssel („s1.…“), den sie einmalig
+-- gegen das Passwort eintauschen. In der Datenbank liegt nur dessen SHA-256-Hash. Überall, wo das
+-- Gruppen-Passwort geprüft wird (passwort_ok), gilt auch ein gültiger Schlüssel (max. 1 Jahr alt).
+-- Passwort ändern (gruppen-passwort.sql) oder „Alle Geräte abmelden“ im Admin löscht alle Schlüssel.
+
+create table if not exists public.sitzungen (
+  hash text primary key,
+  erstellt timestamptz not null default now()
+);
+alter table public.sitzungen enable row level security;
+revoke all on public.sitzungen from anon, authenticated;
+
+create or replace function public.passwort_ok(p_passwort text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select case
+    when p_passwort like 's1.%' then exists (
+      select 1 from public.sitzungen
+      where hash = encode(digest(p_passwort, 'sha256'), 'hex') and erstellt > now() - interval '1 year'
+    )
+    else exists (
+      select 1 from public.einstellungen
+      where schluessel = 'gruppen_passwort' and wert = crypt(coalesce(p_passwort, ''), wert)
+    )
+  end;
+$$;
+
+-- Gruppen-Passwort gegen einen neuen Sitzungs-Schlüssel tauschen (ein Schlüssel nur gegen das echte Passwort)
+create or replace function public.sitzung_anlegen(p_passwort text)
+returns text
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  schluessel text;
+begin
+  if p_passwort like 's1.%' or not public.passwort_ok(p_passwort) then
+    raise exception 'Falsches Gruppen-Passwort';
+  end if;
+  schluessel := 's1.' || encode(gen_random_bytes(32), 'hex');
+  insert into public.sitzungen (hash) values (encode(digest(schluessel, 'sha256'), 'hex'));
+  delete from public.sitzungen where erstellt < now() - interval '1 year';
+  return schluessel;
+end $$;
+
+-- Admin: alle Geräte abmelden (z. B. bei verlorenem Handy)
+create or replace function public.admin_sitzungen_loeschen(p_passwort text)
+returns int
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  anzahl int;
+begin
+  if not public.admin_ok(p_passwort) then
+    raise exception 'Falsches Admin-Passwort';
+  end if;
+  delete from public.sitzungen;
+  get diagnostics anzahl = row_count;
+  return anzahl;
+end $$;
+
+revoke execute on function public.sitzung_anlegen(text) from public;
+revoke execute on function public.admin_sitzungen_loeschen(text) from public;
+grant execute on function public.sitzung_anlegen(text) to anon, authenticated;
+grant execute on function public.admin_sitzungen_loeschen(text) to anon, authenticated;

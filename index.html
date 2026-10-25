@@ -6,9 +6,16 @@
   <title>Prüfi-Duell</title>
   <meta name="theme-color" content="#111214">
   <meta name="description" content="Quizduell für die Kfz-Prüfingenieur-Ausbildung">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+  <link rel="icon" type="image/png" href="icons/favicon-64.png">
+  <!-- App auf dem Startbildschirm (PWA): Manifest, Symbol und iPhone-Angaben -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Prüfi-Duell">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <!-- ?v=… bei jeder Änderung erhöhen, damit Browser keine alte Version aus dem Cache nehmen -->
-  <link rel="stylesheet" href="style.css?v=25">
+  <link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
   <header class="topbar">
@@ -22,9 +29,9 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/dist/umd/supabase.js"></script>
-  <script src="config.js?v=25"></script>
-  <script src="db.js?v=25"></script>
-  <script src="effekte.js?v=25"></script>
-  <script src="app.js?v=25"></script>
+  <script src="config.js?v=26"></script>
+  <script src="db.js?v=26"></script>
+  <script src="effekte.js?v=26"></script>
+  <script src="app.js?v=26"></script>
 </body>
 </html>

@@ -2,7 +2,8 @@
 -- 1. Unten bei neues_passwort dein Passwort zwischen die Hochkommas schreiben.
 -- 2. Supabase → SQL Editor → New query → einfügen → Run.
 -- Gespeichert wird nur ein Hash, nicht das Passwort selbst.
--- Nach einer Änderung müssen alle Mitspieler das neue Passwort einmal eingeben.
+-- Nach einer Änderung müssen alle Mitspieler das neue Passwort einmal eingeben
+-- (alle gespeicherten Anmeldungen = Sitzungs-Schlüssel werden dabei gelöscht).
 
 do $$
 declare
@@ -14,4 +15,5 @@ begin
   insert into public.einstellungen (schluessel, wert)
   values ('gruppen_passwort', extensions.crypt(neues_passwort, extensions.gen_salt('bf')))
   on conflict (schluessel) do update set wert = excluded.wert;
+  delete from public.sitzungen;
 end $$;

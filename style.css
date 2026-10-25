@@ -197,7 +197,7 @@ textarea {
 
 /* ---------- Login & Start ---------- */
 .hero { text-align: center; padding: 24px 0 16px; }
-.hero-logo { font-size: 3.5rem; }
+.hero-logo { width: 96px; height: 96px; border-radius: 22px; }
 .hero h1 { margin: 8px 0 4px; }
 .hero p { color: var(--gedaempft); margin: 0; }
 
@@ -588,3 +588,9 @@ textarea {
   max-height: 120px;
 }
 .chat-eingabe .btn { flex: none; }
+
+/* ---------- Hinweis: als App installieren ---------- */
+.app-hinweis { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; padding: 12px 14px; font-size: 0.9rem; border-color: var(--primaer); }
+.app-hinweis > span { flex: 1; min-width: 0; }
+.app-hinweis .btn { flex: none; }
+.app-hinweis-weg { flex: none; padding: 4px 6px; font-size: 1rem; margin: 0; }

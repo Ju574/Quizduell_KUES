@@ -22,7 +22,7 @@ const ALT_SEKUNDEN = { runden: 20, live: 15 };
 
 const app = document.getElementById('app');
 let ich = null;                  // { id, name } des angemeldeten Spielers
-let passwort = '';               // Gruppen-Passwort für den Zugriff auf die Fragen
+let passwort = '';               // Sitzungs-Schlüssel (statt des Gruppen-Passworts) für den Zugriff auf die Fragen
 let ansicht = '';                // Name der gerade angezeigten Ansicht
 let frageTimer = null;
 let lernstand = new Map();       // frage_id → { richtig, falsch, serie }
@@ -771,7 +771,7 @@ function login(hinweis) {
   topbarAktualisieren();
   show(`
     <div class="hero">
-      <div class="hero-logo">🔧</div>
+      <img class="hero-logo" src="icons/icon-192.png" alt="" width="96" height="96">
       <h1>Prüfi-Duell</h1>
       <p>Quizduell für die Kfz-Prüfingenieur-Ausbildung</p>
     </div>
@@ -797,8 +797,9 @@ function login(hinweis) {
       if (!passwort) {
         const pw = app.querySelector('#passwort').value;
         if (!(await DB.passwortPruefen(pw))) return toast('Das Gruppen-Passwort stimmt nicht.');
-        passwort = pw;
-        speichern('pruefi-pw', pw);
+        // Auf dem Gerät bleibt nur ein Sitzungs-Schlüssel gespeichert, nicht das Passwort selbst
+        passwort = await DB.sitzungAnlegen(pw);
+        speichern('pruefi-pw', passwort);
       }
       const id = idAusName(name);
       const vorhanden = await DB.spielerHolen(id);
@@ -936,6 +937,7 @@ async function startseite() {
       <a class="kachel" href="#/rangliste"><span>🏆</span>Rangliste</a>
       <a class="kachel breit" href="#/chat"><span>💬</span>Gruppenchat<b class="chat-zahl" data-chat-zahl hidden></b></a>
     </div>
+    <div id="app-hinweis-platz">${appHinweis()}</div>
     <p class="klein gedaempft mitte">${sicher} von ${FRAGEN_LISTE.length} Fragen sicher · ${KATEGORIEN.length} Kategorien</p>
     ${!FRAGEN_LISTE.length ? '<p class="warnung mitte">Es sind noch keine Fragen in der Datenbank.</p>' : ''}
     ${abschnitt('⚡ Live-Herausforderungen', einladungen, (d) => zeile(d, 'Annehmen?', true))}
@@ -949,7 +951,68 @@ async function startseite() {
     ${!duelle.length ? '<p class="leer">Noch keine Duelle. Fordere jemanden heraus!</p>' : ''}
     <p class="mitte fusszeile"><a class="link gedaempft klein" href="#/admin">Admin</a></p>`);
   chatZahlZeigen();
+  appHinweisAktivieren();
 }
+
+// ===== Als App auf den Startbildschirm =====
+// Android/Chrome liefert eine Installations-Abfrage, die wir für einen eigenen Knopf aufheben.
+// Auf dem iPhone gibt es das nicht – dort zeigen wir die Anleitung (Teilen → „Zum Home-Bildschirm“).
+let installAbfrage = null;
+const alsAppGeoeffnet = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const istIPhone = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function appHinweis() {
+  if (alsAppGeoeffnet() || gespeichert('pruefi-app-hinweis-weg')) return '';
+  const weg = '<button class="link gedaempft app-hinweis-weg" id="app-hinweis-weg" aria-label="Hinweis ausblenden" title="Ausblenden">✕</button>';
+  if (istIPhone()) {
+    return `<div class="karte app-hinweis"><span>📲 <b>Als App nutzen:</b> In Safari auf <b>Teilen</b> (Quadrat mit Pfeil ↑) tippen,
+      dann <b>„Zum Home-Bildschirm“</b>. In der App einmal neu anmelden.</span>${weg}</div>`;
+  }
+  if (installAbfrage) {
+    return `<div class="karte app-hinweis"><span>📲 Prüfi-Duell als App auf den Startbildschirm legen</span>
+      <button class="btn klein primaer" id="app-installieren">Installieren</button>${weg}</div>`;
+  }
+  return '';
+}
+
+function appHinweisAktivieren() {
+  const platz = document.getElementById('app-hinweis-platz');
+  if (!platz) return;
+  const knopf = platz.querySelector('#app-installieren');
+  if (knopf) {
+    knopf.onclick = async () => {
+      const abfrage = installAbfrage;
+      installAbfrage = null;
+      if (!abfrage) return;
+      abfrage.prompt();
+      await abfrage.userChoice.catch(() => {});
+      platz.innerHTML = appHinweis();
+      appHinweisAktivieren();
+    };
+  }
+  const weg = platz.querySelector('#app-hinweis-weg');
+  if (weg) {
+    weg.onclick = () => {
+      speichern('pruefi-app-hinweis-weg', '1');
+      platz.innerHTML = '';
+    };
+  }
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installAbfrage = e;
+  const platz = document.getElementById('app-hinweis-platz');
+  if (platz) {
+    platz.innerHTML = appHinweis();
+    appHinweisAktivieren();
+  }
+});
+window.addEventListener('appinstalled', () => {
+  installAbfrage = null;
+  const platz = document.getElementById('app-hinweis-platz');
+  if (platz) platz.innerHTML = '';
+});
 
 // ===== Themen-Auswahl (Kategorien und Rechenaufgaben ausschließen) =====
 // themen = { ohne: [Kategorien], ohneRechnung } – wird im Duell gespeichert und auf diesem Gerät gemerkt
@@ -2330,6 +2393,8 @@ async function adminAnsicht() {
     ${offen.length ? '<button class="btn" id="meldungen-kopieren">📋 Offene Meldungen für Claude kopieren</button>' : ''}
     <div class="liste">${meldungen.map(meldungZeile).join('') || '<p class="leer">Keine Meldungen.</p>'}</div>
     <h3>Spieler (${spieler.length})</h3>
+    <button class="btn" id="geraete-abmelden">🔒 Alle Geräte abmelden</button>
+    <p class="klein gedaempft">Z. B. bei verlorenem Handy: Danach müssen alle (auch du) das Gruppen-Passwort neu eingeben.</p>
     <div class="liste">${spieler
       .map((s) => `
         <div class="admin-zeile">
@@ -2367,6 +2432,18 @@ async function adminAnsicht() {
         await DB.adminSpielerLoeschen(adminPw, id);
         if (id === ich.id) abmelden();
       });
+  });
+  on('#geraete-abmelden', async () => {
+    if (!confirm('Wirklich alle Geräte abmelden? Alle müssen danach das Gruppen-Passwort neu eingeben.')) return;
+    try {
+      const anzahl = await DB.adminSitzungenLoeschen(adminPw);
+      passwort = '';
+      speichern('pruefi-pw', null);
+      abmelden();
+      toast(`${anzahl} ${anzahl === 1 ? 'Gerät' : 'Geräte'} abgemeldet.`);
+    } catch (e) {
+      fehler(e);
+    }
   });
   app.querySelectorAll('[data-lernstand]').forEach((b) => {
     const id = b.dataset.lernstand;
@@ -2574,7 +2651,22 @@ async function boot() {
   demo.hidden = DB.modus !== 'demo';
   if (DB.modus === 'demo') demo.innerHTML += ' Gruppen-Passwort im Demo-Modus: <code>demo</code>';
   window.addEventListener('hashchange', route);
+  // Service Worker für die App auf dem Startbildschirm (nur über HTTPS bzw. localhost möglich)
+  if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('sw.js').catch((e) => console.error(e));
   passwort = gespeichert('pruefi-pw') || '';
+  // Ältere Anmeldungen haben noch das Passwort selbst gespeichert → einmalig gegen einen Sitzungs-Schlüssel tauschen
+  if (passwort && DB.modus !== 'demo' && !passwort.startsWith('s1.')) {
+    try {
+      passwort = await DB.sitzungAnlegen(passwort);
+      speichern('pruefi-pw', passwort);
+    } catch (e) {
+      // Passwort inzwischen geändert → neu anmelden; bei Verbindungsproblemen bleibt es vorerst gespeichert
+      if (/passwort/i.test(e.message || '')) {
+        passwort = '';
+        speichern('pruefi-pw', null);
+      }
+    }
+  }
   let ichGespeichert = null;
   try {
     ichGespeichert = JSON.parse(gespeichert('pruefi-ich'));
